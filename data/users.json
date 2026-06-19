@@ -20,5 +20,14 @@
       1
     ],
     "avatar": "/avatars/abf1a62b8c57cfc214acdfb9fb73858f"
+  },
+  {
+    "id": 3,
+    "username": "Максим",
+    "phone": "+79991111112",
+    "password": "123123",
+    "createdAt": "19.06.2026",
+    "friends": [],
+    "avatar": "/avatars/default.png"
   }
 ]

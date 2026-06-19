@@ -7,6 +7,44 @@ const bodyParser = require("body-parser");
 const fs = require("fs");
 const session = require("express-session");
 
+const { Pool } = require("pg");
+
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
+
+async function initDb() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT NOT NULL,
+            phone TEXT UNIQUE,
+            email TEXT UNIQUE,
+            password TEXT NOT NULL,
+            avatar TEXT DEFAULT '/avatars/default.png',
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS friends (
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            friend_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (user_id, friend_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+            id SERIAL PRIMARY KEY,
+            from_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            to_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            text TEXT,
+            photos JSONB DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+
+    console.log("PostgreSQL подключён, таблицы готовы");
+}
+
 const app = express();
 
 const upload = multer({
@@ -71,7 +109,7 @@ app.post("/register", (req, res) => {
         JSON.stringify(users, null, 2)
     );
 
-    req.session.username = newUser.username;
+    req.session.userId = newUser.id;
     onlineUsers[newUser.username] = true;
 
     res.redirect("/feed");
@@ -94,7 +132,7 @@ app.post("/login", (req, res) => {
 
     if (user) {
 
-        req.session.username = user.username;
+        req.session.userId = user.id;
         onlineUsers[user.username] = true;
 
         io.emit("online update", onlineUsers);
@@ -111,15 +149,15 @@ app.post("/login", (req, res) => {
 
 app.get("/profile", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
 
     const currentUser = users.find(
-        u => u.username === req.session.username
-    );
+    u => u.id === req.session.userId
+);
 
     res.send(`
     <html>
@@ -297,7 +335,8 @@ app.get("/profile", (req, res) => {
     `);
 });
 app.get("/logout", (req, res) => {
-    delete onlineUsers[req.session.username];
+    const user = users.find(u => u.id === req.session.userId);
+if (user) delete onlineUsers[user.username];
     io.emit("online update", onlineUsers);
 
     req.session.destroy(() => {
@@ -311,18 +350,18 @@ app.get("/logout", (req, res) => {
 
 app.get("/users", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
 
     const currentUser = users.find(
-        u => u.username === req.session.username
+        u => u.id === req.session.userId
     );
 
     const otherUsers = users.filter(
-        u => u.username !== req.session.username
+        u => u.id !== currentUser.id
     );
 
     let list = "";
@@ -493,7 +532,7 @@ app.get("/users", (req, res) => {
 
 app.get("/add-friend/:id", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
@@ -502,8 +541,8 @@ app.get("/add-friend/:id", (req, res) => {
     );
 
     const currentUser = users.find(
-        u => u.username === req.session.username
-    );
+    u => u.id === req.session.userId
+);
 
     const targetUser = users.find(
         u => u.id == req.params.id
@@ -527,15 +566,15 @@ app.get("/add-friend/:id", (req, res) => {
 
 app.get("/friends", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
 
     const currentUser = users.find(
-        u => u.username === req.session.username
-    );
+    u => u.id === req.session.userId
+);
 
     const friends = users.filter(
         u => currentUser.friends.includes(u.id)
@@ -740,14 +779,16 @@ app.get("/friends", (req, res) => {
 
 app.get("/dialog/:id", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
     const messages = JSON.parse(fs.readFileSync("data/messages.json"));
 
-    const currentUser = users.find(u => u.username === req.session.username);
+    const currentUser = users.find(
+    u => u.id === req.session.userId
+);
     const friend = users.find(u => u.id == req.params.id);
 
     if (!friend) {
@@ -927,7 +968,7 @@ app.get("/dialog/:id", (req, res) => {
 <script>
     const socket = io();
     const dialogId = "${dialogId}";
-    const currentUsername = "${currentUser.username}";
+    const currentUserId = "${currentUser.id}";
     const friendUsername = "${friend.username}";
     const friendId = "${friend.id}";
 
@@ -958,7 +999,7 @@ app.get("/dialog/:id", (req, res) => {
         const row = document.createElement("div");
 
         row.className =
-            data.fromName === currentUsername
+            String(data.fromId) === String(currentUserId)
                 ? "message-row my-message"
                 : "message-row friend-message";
 
@@ -999,9 +1040,9 @@ app.get("/dialog/:id", (req, res) => {
     }
 
     socket.on("private message", (data) => {
-        if (data.fromName !== currentUsername) {
-            addMessage(data);
-        }
+        if (String(data.fromId) !== String(currentUserId)) {
+    addMessage(data);
+}
     });
 
     socket.on("online update", (onlineUsers) => {
@@ -1161,14 +1202,16 @@ fixIOSChatHeight();
 
 app.post("/send-message/:id", messagePhotoUpload.array("photos", 10), (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.status(401).json({ success: false, error: "Не авторизован" });
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
     const messages = JSON.parse(fs.readFileSync("data/messages.json"));
 
-    const currentUser = users.find(u => u.username === req.session.username);
+    const currentUser = users.find(
+    u => u.id === req.session.userId
+);
     const friend = users.find(u => u.id == req.params.id);
 
     if (!friend) {
@@ -1196,12 +1239,13 @@ app.post("/send-message/:id", messagePhotoUpload.array("photos", 10), (req, res)
     const dialogId = [currentUser.id, friend.id].sort().join("-");
 
     const messageForClient = {
-        dialogId,
-        fromName: currentUser.username,
-        text: newMessage.text,
-        photos: newMessage.photos,
-        date: newMessage.date
-    };
+    dialogId,
+    fromId: currentUser.id,
+    fromName: currentUser.username,
+    text: newMessage.text,
+    photos: newMessage.photos,
+    date: newMessage.date
+};
 
     socketMessage = messageForClient;
 
@@ -1215,15 +1259,15 @@ app.post("/send-message/:id", messagePhotoUpload.array("photos", 10), (req, res)
 
 app.post("/upload-avatar", upload.single("avatar"), (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
 
     const user = users.find(
-        u => u.username === req.session.username
-    );
+    u => u.id === req.session.userId
+);
 
     user.avatar = "/avatars/" + req.file.filename;
 
@@ -1238,15 +1282,15 @@ app.post("/upload-avatar", upload.single("avatar"), (req, res) => {
 
 app.get("/feed", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
     const users = JSON.parse(fs.readFileSync("data/users.json"));
 
     const currentUser = users.find(
-        u => u.username === req.session.username
-    );
+    u => u.id === req.session.userId
+);
 
     const friends = users.filter(
         u => currentUser.friends.includes(u.id)
@@ -1449,7 +1493,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
 
 app.get("/messages", (req, res) => {
 
-    if (!req.session.username) {
+    if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
@@ -1457,8 +1501,8 @@ app.get("/messages", (req, res) => {
     const messages = JSON.parse(fs.readFileSync("data/messages.json"));
 
     const currentUser = users.find(
-        u => u.username === req.session.username
-    );
+    u => u.id === req.session.userId
+);
 
     const friends = users.filter(
         u => currentUser.friends.includes(u.id)
@@ -1673,6 +1717,10 @@ io.on("connection", (socket) => {
 
 
 
-server.listen(3000, () => {
-    console.log("Lidus запущен на порту 3000");
+const PORT = process.env.PORT || 3000;
+
+initDb().then(() => {
+    server.listen(PORT, () => {
+        console.log(`Lidus запущен на порту ${PORT}`);
+    });
 });
