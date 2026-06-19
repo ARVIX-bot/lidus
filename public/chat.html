@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lidus Chat</title>
+</head>
+<body>
+
+<h1>💬 Lidus Chat</h1>
+
+<div id="messages"></div>
+
+<input id="messageInput" placeholder="Введите сообщение">
+<button onclick="sendMessage()">Отправить</button>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+
+const socket = io();
+
+function sendMessage() {
+
+    const input = document.getElementById("messageInput");
+
+    socket.emit("chat message", input.value);
+
+    input.value = "";
+}
+
+socket.on("chat message", (msg) => {
+
+    const div = document.getElementById("messages");
+
+    div.innerHTML += `<p>${msg}</p>`;
+});
+
+</script>
+
+</body>
+</html>

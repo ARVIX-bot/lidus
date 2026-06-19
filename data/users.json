@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1,
+    "username": "ARVIX",
+    "phone": "+79990000000",
+    "password": "Ale.maksim2012",
+    "createdAt": "16.06.2026",
+    "friends": [
+      2
+    ],
+    "avatar": "/avatars/da3b99717f6d07795e968b5f13dadf18"
+  },
+  {
+    "id": 2,
+    "username": "Lidus",
+    "phone": "+79991111111",
+    "password": "123456",
+    "createdAt": "16.06.2026",
+    "friends": [
+      1
+    ],
+    "avatar": "/avatars/abf1a62b8c57cfc214acdfb9fb73858f"
+  }
+]
