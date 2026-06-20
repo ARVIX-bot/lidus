@@ -19,21 +19,25 @@ const pool = hasDatabase
     : null;
 
 async function initDb() {
-    if (!hasDatabase) {
-        console.log("PostgreSQL не подключён локально, работаем пока через JSON");
-        return;
-    }
+
+    if (!hasDatabase) return;
+
+    await pool.query(`
+        DROP TABLE IF EXISTS friends CASCADE;
+        DROP TABLE IF EXISTS messages CASCADE;
+        DROP TABLE IF EXISTS users CASCADE;
+    `);
 
     await pool.query(`
         CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT NOT NULL,
-            phone TEXT UNIQUE,
-            email TEXT UNIQUE,
-            password TEXT NOT NULL,
-            avatar TEXT DEFAULT '/avatars/default.png',
-            created_at TIMESTAMP DEFAULT NOW()
-        );
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    login TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE,
+    password TEXT NOT NULL,
+    avatar TEXT DEFAULT '/images/logo.png',
+    created_at TIMESTAMP DEFAULT NOW()
+);
 
         CREATE TABLE IF NOT EXISTS friends (
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
