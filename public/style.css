@@ -1980,3 +1980,18 @@ gap:12px;
     }
 }
 
+.lidus-login-error {
+    display: none;
+    margin: 0 0 18px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255, 77, 109, .12);
+    border: 1px solid rgba(255, 77, 109, .28);
+    color: #ffb4c2;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.lidus-login-error.show {
+    display: block;
+}

@@ -13,6 +13,9 @@
     <meta name="apple-mobile-web-app-title" content="Lidus">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
+    <link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
     <link rel="stylesheet" href="/style.css?v=5004">
 </head>
 
@@ -37,6 +40,10 @@
                 <small>WELCOME BACK</small>
                 <h2>Вход в аккаунт</h2>
                 <p>Вернись на свою орбиту общения</p>
+            </div>
+
+            <div id="loginError" class="lidus-login-error">
+                Неверный логин или пароль
             </div>
 
             <form method="POST" action="/login" class="lidus-login-form">
@@ -126,6 +133,33 @@
         </section>
 
     </main>
+
+    <script>
+    const params = new URLSearchParams(window.location.search);
+    const errorBox = document.getElementById("loginError");
+    const loginInput = document.querySelector('input[name="login"]');
+    const passwordInput = document.querySelector('input[name="password"]');
+
+    if (params.get("error") === "wrong" && errorBox) {
+        errorBox.classList.add("show");
+
+        window.history.replaceState({}, document.title, "/login.html");
+    }
+
+    function hideLoginError() {
+        if (errorBox) {
+            errorBox.classList.remove("show");
+        }
+    }
+
+    if (loginInput) {
+        loginInput.addEventListener("input", hideLoginError);
+    }
+
+    if (passwordInput) {
+        passwordInput.addEventListener("input", hideLoginError);
+    }
+</script>
 
 </body>
 </html>

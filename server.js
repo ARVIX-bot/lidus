@@ -85,74 +85,86 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 app.use(express.static("public"));
 
-app.post("/register", (req, res) => {
+app.post("/register", async (req, res) => {
 
-    const { username, phone, password } = req.body;
+    const { username, login, email, password } = req.body;
 
-    const users = JSON.parse(
-        fs.readFileSync("data/users.json")
-    );
+    try {
+        const existingUser = await pool.query(
+            "SELECT id FROM users WHERE login = $1",
+            [login]
+        );
 
-    const phoneExists = users.find(
-        u => u.phone === phone
-    );
+        if (existingUser.rows.length > 0) {
+            return res.redirect("/register.html?error=login_taken");
+        }
 
-    if (phoneExists) {
-        return res.send("Этот номер уже зарегистрирован");
-    }
+        const result = await pool.query(
+            `
+            INSERT INTO users (username, login, email, password, avatar)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id, username, avatar
+            `,
+            [
+                username,
+                login,
+                email || null,
+                password,
+                "/images/logo.png"
+            ]
+        );
 
-    const newUser = {
-        id: users.length + 1,
-        username,
-        phone,
-        password,
-        createdAt: new Date().toLocaleDateString("ru-RU"),
-        friends: [],
-        avatar: "/avatars/default.png"
-    };
+        const newUser = result.rows[0];
 
-    users.push(newUser);
+        req.session.userId = newUser.id;
 
-    fs.writeFileSync(
-        "data/users.json",
-        JSON.stringify(users, null, 2)
-    );
-
-    req.session.userId = newUser.id;
-    onlineUsers[newUser.username] = true;
-
-    res.redirect("/feed");
-});
-
-
-app.post("/login", (req, res) => {
-
-    const { phone, password } = req.body;
-
-    const users = JSON.parse(
-        fs.readFileSync("data/users.json")
-    );
-
-    const user = users.find(
-        u =>
-            u.phone === phone &&
-            u.password === password
-    );
-
-    if (user) {
-
-        req.session.userId = user.id;
-        onlineUsers[user.username] = true;
+        onlineUsers[newUser.id] = true;
 
         io.emit("online update", onlineUsers);
 
         res.redirect("/feed");
 
-    } else {
-
-        res.send("Неверный номер телефона или пароль");
-
+    } catch (error) {
+        console.error(error);
+        res.send("Ошибка регистрации");
     }
+
+});
+
+
+app.post("/login", async (req, res) => {
+
+    const { login, password } = req.body;
+
+    try {
+        const result = await pool.query(
+            `
+            SELECT id, username, password
+            FROM users
+            WHERE login = $1
+            `,
+            [login]
+        );
+
+        const user = result.rows[0];
+
+        if (!user || user.password !== password) {
+            return res.redirect("/login.html?error=wrong");
+        }
+
+        req.session.userId = user.id;
+
+        onlineUsers[user.id] = true;
+
+        io.emit("online update", onlineUsers);
+
+        res.redirect("/feed");
+
+    } catch (error) {
+        console.error(error);
+        res.send("Ошибка входа");
+    }
+
 });
 
 
@@ -577,7 +589,14 @@ app.get("/add-friend/:id", (req, res) => {
         JSON.stringify(users, null, 2)
     );
 
-    res.redirect("/profile");
+    req.session.userId = newUser.id;
+
+onlineUsers[newUser.id] = true;
+
+io.emit("online update", onlineUsers);
+
+res.redirect("/feed");
+
 });
 
 app.get("/friends", (req, res) => {

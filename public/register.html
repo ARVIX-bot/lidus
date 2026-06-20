@@ -1,24 +1,144 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    <title>Регистрация</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+
+    <title>Lidus Orbit — Регистрация</title>
+
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#050510">
+
+    <link rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+    <link rel="stylesheet" href="/style.css?v=5006">
 </head>
-<body>
 
-<h1>Регистрация</h1>
+<body class="lidus-login-body">
 
-<form method="POST" action="/register">
-    <input type="text" name="username" placeholder="Имя" required>
-    <br><br>
+    <div class="lidus-login-bg"></div>
 
-    <input type="tel" name="phone" placeholder="Номер телефона" required>
-    <br><br>
+    <main class="lidus-login-page">
 
-    <input type="password" name="password" placeholder="Пароль" required>
-    <br><br>
+        <section class="lidus-login-card">
 
-    <button type="submit">Создать аккаунт</button>
-</form>
+            <div class="lidus-login-brand">
+                <img src="/images/logo.png" alt="Lidus Orbit">
+
+                <div>
+                    <h1>LIDUS <span>ORBIT</span></h1>
+                    <p>создание аккаунта</p>
+                </div>
+            </div>
+
+            <div class="lidus-login-title">
+                <small>CREATE ACCOUNT</small>
+                <h2>Регистрация</h2>
+                <p>Создай свой аккаунт в Lidus Orbit</p>
+            </div>
+
+            <div id="registerError" class="lidus-login-error">
+                Такой логин уже занят
+            </div>
+
+            <form method="POST" action="/register" class="lidus-login-form">
+
+                <label class="lidus-login-field">
+                    <span>Имя</span>
+                    <div class="lidus-login-input">
+                        <i class="fa-regular fa-id-card"></i>
+                        <input type="text" name="username" placeholder="Например: Максим" required>
+                    </div>
+                </label>
+
+                <label class="lidus-login-field">
+                    <span>Логин</span>
+                    <div class="lidus-login-input">
+                        <i class="fa-regular fa-circle-user"></i>
+                        <input type="text" name="login" placeholder="Придумайте логин" autocomplete="username" required>
+                    </div>
+                </label>
+                
+                <label class="lidus-login-field">
+    <span>Email</span>
+    <div class="lidus-login-input">
+        <i class="fa-regular fa-envelope"></i>
+        <input type="email" name="email" placeholder="Введите email" autocomplete="email">
+    </div>
+</label>
+
+                <label class="lidus-login-field">
+                    <span>Пароль</span>
+                    <div class="lidus-login-input">
+                        <i class="fa-solid fa-shield-halved"></i>
+                        <input type="password" name="password" placeholder="Придумайте пароль" autocomplete="new-password" required>
+                    </div>
+                </label>
+
+                <button type="submit" class="lidus-login-btn">
+                    Создать аккаунт
+                    <b>→</b>
+                </button>
+
+            </form>
+
+            <p class="lidus-login-bottom">
+                Уже есть аккаунт?
+                <a href="/login.html">Войти</a>
+            </p>
+
+        </section>
+
+        <section class="lidus-login-side">
+            <div class="lidus-side-badge">Lidus Orbit</div>
+
+            <h2>Твоя <span>орбита.</span></h2>
+
+            <p>
+                Один логин — один аккаунт. Имя может повторяться,
+                но логин всегда уникальный.
+            </p>
+
+            <div class="lidus-feature-grid">
+                <div class="lidus-feature">
+                    <i>👤</i>
+                    <b>Имя</b>
+                    <span>видят друзья</span>
+                </div>
+
+                <div class="lidus-feature">
+                    <i>🔐</i>
+                    <b>Логин</b>
+                    <span>для входа</span>
+                </div>
+
+                <div class="lidus-feature">
+                    <i>💬</i>
+                    <b>Чаты</b>
+                    <span>личные сообщения</span>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const errorBox = document.getElementById("registerError");
+        const loginInput = document.querySelector('input[name="login"]');
+
+        if (params.get("error") === "login_taken" && errorBox) {
+            errorBox.classList.add("show");
+            window.history.replaceState({}, document.title, "/register.html");
+        }
+
+        if (loginInput) {
+            loginInput.addEventListener("input", () => {
+                errorBox.classList.remove("show");
+            });
+        }
+    </script>
 
 </body>
 </html>
