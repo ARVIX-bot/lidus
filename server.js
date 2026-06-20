@@ -107,22 +107,6 @@ function formatTime(value) {
     });
 }
 
-function escapeHtmlServer(value) {
-    return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}
-
-function previewMessage(text, photos) {
-    const hasPhotos = Array.isArray(photos) && photos.length > 0;
-    if (text && text.trim()) return escapeHtmlServer(text.trim());
-    if (hasPhotos) return "📷 Фото";
-    return "Начните диалог";
-}
-
 function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
     const avatar = currentUser?.avatar || "/images/logo.png";
     const username = currentUser?.username || "Lidus";
@@ -154,7 +138,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="/style.css?v=3002">
+        <link rel="stylesheet" href="/style.css?v=5002">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     </head>
     <body>
@@ -438,88 +422,96 @@ app.get("/messages", requireAuth, async (req, res) => {
 
         const dialogsResult = await pool.query(
             `
-            WITH dialog_users AS (
-                SELECT u.id, u.username, u.login, u.avatar
-                FROM users u
-                JOIN friends f ON f.friend_id = u.id
-                WHERE f.user_id = $1
-            ),
-            latest AS (
+            WITH last_messages AS (
                 SELECT DISTINCT ON (
                     CASE
-                        WHEN m.from_id = $1 THEN m.to_id
-                        ELSE m.from_id
+                        WHEN from_id = $1 THEN to_id
+                        ELSE from_id
                     END
                 )
                     CASE
-                        WHEN m.from_id = $1 THEN m.to_id
-                        ELSE m.from_id
-                    END AS dialog_user_id,
-                    m.id AS message_id,
-                    m.from_id,
-                    m.to_id,
-                    m.text,
-                    m.photos,
-                    m.created_at,
-                    m.read_at
-                FROM messages m
-                WHERE m.from_id = $1 OR m.to_id = $1
+                        WHEN from_id = $1 THEN to_id
+                        ELSE from_id
+                    END AS friend_id,
+                    id AS message_id,
+                    from_id,
+                    to_id,
+                    text,
+                    photos,
+                    created_at,
+                    read_at
+                FROM messages
+                WHERE from_id = $1 OR to_id = $1
                 ORDER BY
                     CASE
-                        WHEN m.from_id = $1 THEN m.to_id
-                        ELSE m.from_id
+                        WHEN from_id = $1 THEN to_id
+                        ELSE from_id
                     END,
-                    m.created_at DESC
+                    created_at DESC
             )
             SELECT
-                du.id,
-                du.username,
-                du.login,
-                du.avatar,
-                latest.message_id,
-                latest.from_id,
-                latest.to_id,
-                latest.text,
-                latest.photos,
-                latest.created_at,
-                latest.read_at
-            FROM dialog_users du
-            LEFT JOIN latest ON latest.dialog_user_id = du.id
-            ORDER BY latest.created_at DESC NULLS LAST, du.username ASC
+                u.id,
+                u.username,
+                u.login,
+                u.avatar,
+                lm.message_id,
+                lm.from_id,
+                lm.to_id,
+                lm.text,
+                lm.photos,
+                lm.created_at,
+                lm.read_at
+            FROM users u
+            JOIN last_messages lm ON lm.friend_id = u.id
+            ORDER BY lm.created_at DESC
             `,
             [currentUser.id]
         );
 
-        const dialogs = dialogsResult.rows;
+        const friendsResult = await pool.query(
+            `SELECT u.id, u.username, u.login, u.avatar
+             FROM users u
+             JOIN friends f ON f.friend_id = u.id
+             WHERE f.user_id = $1
+             ORDER BY u.username`,
+            [currentUser.id]
+        );
+
+        const dialogMap = new Map();
+        dialogsResult.rows.forEach(d => dialogMap.set(d.id, d));
+        friendsResult.rows.forEach(f => {
+            if (!dialogMap.has(f.id)) dialogMap.set(f.id, f);
+        });
+
+        const dialogs = Array.from(dialogMap.values());
 
         const list = dialogs.map(d => {
             const photos = Array.isArray(d.photos) ? d.photos : [];
-            const lastText = previewMessage(d.text, photos);
-            const lastTime = d.created_at ? formatTime(d.created_at) : "";
-            const isMyLast = Number(d.from_id) === Number(currentUser.id);
-            const readIcon = isMyLast
-                ? `<span class="dialog-check ${d.read_at ? "is-read" : ""}">${d.read_at ? "✓✓" : "✓"}</span>`
+            const isMyLastMessage = Number(d.from_id) === Number(currentUser.id);
+            const readIcon = isMyLastMessage
+                ? `<span class="dialog-read-status ${d.read_at ? "is-read" : ""}">${d.read_at ? "✓✓" : "✓"}</span>`
                 : "";
-            const online = onlineUsers[d.id] ? "Онлайн" : "Оффлайн";
-            const onlineClass = onlineUsers[d.id] ? "is-online" : "";
+            const lastText = d.text && d.text.trim()
+                ? d.text
+                : (photos.length ? "📷 Фото" : "Начните диалог");
+            const status = onlineUsers[d.id] ? "Онлайн" : "Оффлайн";
+            const onlineDot = onlineUsers[d.id] ? `<span class="dialog-online-dot"></span>` : "";
 
             return `
-                <a href="/dialog/${d.id}" class="dialog-list-item">
+                <a href="/dialog/${d.id}" class="dialog-row">
                     <div class="dialog-avatar-wrap">
-                        <img src="${d.avatar || "/images/logo.png"}" class="dialog-list-avatar">
-                        <span class="dialog-online-dot ${onlineClass}"></span>
+                        <img src="${d.avatar || "/images/logo.png"}" class="dialog-row-avatar">
+                        ${onlineDot}
                     </div>
 
-                    <div class="dialog-list-main">
-                        <div class="dialog-list-top">
-                            <div class="dialog-list-name">${escapeHtmlServer(d.username)}</div>
-                            <div class="dialog-list-time">${readIcon}${lastTime}</div>
-                        </div>
+                    <div class="dialog-row-main">
+                        <div class="dialog-row-name">${d.username}</div>
+                        <div class="dialog-row-preview"><span class="dialog-status-text">${status}</span><span class="dialog-dot-separator">•</span>${lastText}</div>
+                    </div>
 
-                        <div class="dialog-list-bottom">
-                            <span class="dialog-status-text">${online}</span>
-                            <span class="dialog-last-text">${lastText}</span>
-                        </div>
+                    <div class="dialog-row-meta">
+                        <div class="dialog-row-time">${d.created_at ? formatTime(d.created_at) : ""}</div>
+                        <div class="dialog-row-checks">${readIcon}</div>
                     </div>
                 </a>
             `;
@@ -530,29 +522,30 @@ app.get("/messages", requireAuth, async (req, res) => {
             active: "messages",
             currentUser,
             body: `
-                <div class="mobile-messages-page">
-                    <div class="mobile-messages-header">
+                <section class="messages-page">
+                    <div class="messages-head">
                         <h1>Сообщения</h1>
-                        <a href="/users" class="mobile-search-btn">
-                            <i class="fa-solid fa-magnifying-glass"></i>
-                        </a>
+                        <div class="messages-head-actions">
+                            <button type="button" class="messages-icon-btn"><i class="fa-solid fa-ellipsis"></i></button>
+                            <a href="/users" class="messages-icon-btn primary"><i class="fa-solid fa-plus"></i></a>
+                        </div>
                     </div>
 
-                    <div class="mobile-dialog-search">
+                    <div class="messages-searchbar">
                         <i class="fa-solid fa-magnifying-glass"></i>
-                        <input type="text" placeholder="Люди, чаты и сообщения">
+                        <input placeholder="Люди, чаты и сообщения">
                     </div>
 
-                    <div class="dialog-tabs">
-                        <span class="active">Все</span>
-                        <span>Новые</span>
-                        <span>Каналы</span>
+                    <div class="messages-tabs">
+                        <button class="active" type="button">Все</button>
+                        <button type="button">Новые</button>
+                        <button type="button">Каналы</button>
                     </div>
 
-                    <div class="dialog-list">
-                        ${list || "<div class='empty-dialogs'><h3>Сообщений пока нет</h3><p>Добавьте друга и начните диалог</p></div>"}
+                    <div class="messages-list">
+                        ${list || "<div class='messages-empty'>Добавьте друга и начните диалог</div>"}
                     </div>
-                </div>
+                </section>
             `,
             rightPanel: `<div class="side-card"><h3>Статистика</h3><p>💬 Диалогов: ${dialogs.length}</p></div><div class="side-card"><h3>Подсказка</h3><p>👥 Добавляйте новых друзей</p><p>🔒 Сообщения приватны</p></div>`
         }));
@@ -614,7 +607,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <link rel="manifest" href="/manifest.json">
             <meta name="theme-color" content="#6b4dff">
             <title>Lidus — Диалог с ${friend.username}</title>
-            <link rel="stylesheet" href="/style.css?v=3002">
+            <link rel="stylesheet" href="/style.css?v=5002">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
         </head>
         <body>

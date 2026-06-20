@@ -2112,129 +2112,163 @@ gap:12px;
         max-width: 480px;
     }
 }
-
-/* ===== MESSAGES LIST LIKE MOBILE MESSENGER ===== */
-
-.mobile-messages-page {
+/* ===== MESSAGES PAGE FINAL: MAX-LIKE, LIDUS STYLE ===== */
+.messages-page {
     width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 4px 0 30px;
 }
 
-.mobile-messages-header {
+.messages-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 18px;
+    gap: 18px;
+    margin-bottom: 24px;
 }
 
-.mobile-messages-header h1 {
+.messages-head h1 {
     margin: 0;
-    font-size: 42px;
+    font-size: 38px;
     line-height: 1;
     font-weight: 900;
     letter-spacing: -1px;
 }
 
-.mobile-search-btn {
-    width: 58px;
-    height: 58px;
-    border-radius: 20px;
-    background: rgba(255,255,255,.07);
+.messages-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.messages-icon-btn {
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    border: 0;
+    border-radius: 16px;
+    background: rgba(255,255,255,.08);
     color: white;
+    text-decoration: none;
     display: flex;
     align-items: center;
     justify-content: center;
-    text-decoration: none;
-    font-size: 24px;
+    font-size: 18px;
+    box-shadow: none;
 }
 
-.mobile-dialog-search {
-    height: 56px;
-    border-radius: 20px;
-    background: rgba(255,255,255,.07);
+.messages-icon-btn.primary {
+    background: linear-gradient(135deg, #6b4dff, #9a6cff);
+}
+
+.messages-icon-btn:hover {
+    transform: none;
+}
+
+.messages-searchbar {
+    height: 54px;
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 0 18px;
-    margin-bottom: 18px;
-    color: #8f90a3;
+    margin-bottom: 22px;
+    border-radius: 20px;
+    background: rgba(255,255,255,.075);
+    border: 1px solid rgba(255,255,255,.06);
 }
 
-.mobile-dialog-search input {
+.messages-searchbar i {
+    color: #8f90a3;
+    font-size: 18px;
+}
+
+.messages-searchbar input {
     flex: 1;
+    min-width: 0;
     height: 100%;
-    background: transparent;
+    padding: 0;
     border: 0;
     outline: 0;
+    background: transparent;
     color: white;
     font-size: 17px;
-    padding: 0;
 }
 
-.mobile-dialog-search input::placeholder {
+.messages-searchbar input::placeholder {
     color: #8f90a3;
 }
 
-.dialog-tabs {
+.messages-tabs {
     display: flex;
-    gap: 28px;
-    margin: 0 0 18px;
-    color: #a5a6b8;
-    font-size: 20px;
-    font-weight: 800;
+    align-items: center;
+    gap: 34px;
+    margin-bottom: 22px;
 }
 
-.dialog-tabs span {
+.messages-tabs button {
     position: relative;
-    padding-bottom: 10px;
+    padding: 0 0 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #a3a4b5;
+    font-size: 18px;
+    line-height: 1;
+    font-weight: 800;
+    box-shadow: none;
 }
 
-.dialog-tabs span.active {
+.messages-tabs button:hover {
+    transform: none;
+}
+
+.messages-tabs button.active {
     color: white;
 }
 
-.dialog-tabs span.active::after {
+.messages-tabs button.active::after {
     content: "";
     position: absolute;
     left: 0;
-    right: 0;
     bottom: 0;
-    height: 3px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #6b4dff, #9a6cff);
+    width: 42px;
+    height: 4px;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #6b4dff, #a974ff);
 }
 
-.dialog-list {
+.messages-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
 
-.dialog-list-item {
-    display: flex;
+.dialog-row {
+    min-height: 76px;
+    display: grid;
+    grid-template-columns: 64px 1fr auto;
     align-items: center;
     gap: 14px;
-    min-height: 82px;
-    padding: 10px 2px;
+    padding: 8px 0;
     color: white;
     text-decoration: none;
     border-radius: 18px;
-    transition: .18s ease;
 }
 
-.dialog-list-item:hover {
-    background: rgba(255,255,255,.04);
+.dialog-row:hover {
+    background: rgba(255,255,255,.035);
 }
 
 .dialog-avatar-wrap {
     position: relative;
-    width: 64px;
-    height: 64px;
-    flex: 0 0 64px;
+    width: 58px;
+    height: 58px;
 }
 
-.dialog-list-avatar {
-    width: 64px;
-    height: 64px;
+.dialog-row-avatar {
+    width: 58px;
+    height: 58px;
     border-radius: 50%;
     object-fit: cover;
     display: block;
@@ -2243,158 +2277,192 @@ gap:12px;
 .dialog-online-dot {
     position: absolute;
     right: 1px;
-    bottom: 1px;
-    width: 15px;
-    height: 15px;
+    bottom: 2px;
+    width: 13px;
+    height: 13px;
     border-radius: 50%;
-    background: #5b5d6b;
-    border: 3px solid #090914;
-    display: none;
+    background: #26d85d;
+    border: 2px solid #090914;
 }
 
-.dialog-online-dot.is-online {
-    display: block;
-    background: #20d34a;
-}
-
-.dialog-list-main {
-    flex: 1;
+.dialog-row-main {
     min-width: 0;
-    padding-bottom: 2px;
 }
 
-.dialog-list-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 5px;
-}
-
-.dialog-list-name {
-    min-width: 0;
+.dialog-row-name {
+    margin-bottom: 4px;
+    color: #fff;
+    font-size: 20px;
+    line-height: 1.15;
+    font-weight: 850;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 21px;
-    font-weight: 850;
-    letter-spacing: -.2px;
 }
 
-.dialog-list-time {
-    flex: 0 0 auto;
+.dialog-row-preview {
+    color: #a3a4b5;
+    font-size: 16px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dialog-status-text {
+    color: #a3a4b5;
+}
+
+.dialog-dot-separator {
+    margin: 0 8px;
+    color: rgba(163,164,181,.55);
+}
+
+.dialog-row-meta {
+    min-width: 60px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    color: #9c9caf;
+    justify-content: flex-end;
+    gap: 7px;
+    color: #a3a4b5;
     font-size: 15px;
     font-weight: 700;
 }
 
-.dialog-check {
-    color: #4aa3ff;
-    font-size: 17px;
-    font-weight: 900;
-    letter-spacing: -4px;
-    margin-right: 3px;
-}
-
-.dialog-check.is-read {
-    color: #43c7ff;
-}
-
-.dialog-list-bottom {
+.dialog-row-checks {
+    order: -1;
+    min-width: 20px;
     display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
+    justify-content: flex-end;
+}
+
+.dialog-read-status {
+    color: #37b7e8;
+    font-size: 18px;
+    line-height: 1;
+    font-weight: 900;
+    letter-spacing: -3px;
+}
+
+.dialog-read-status.is-read {
+    color: #37b7e8;
+}
+
+.messages-empty {
+    margin-top: 42px;
+    text-align: center;
     color: #9c9caf;
     font-size: 16px;
 }
 
-.dialog-status-text {
-    color: #9c9caf;
-    white-space: nowrap;
-}
-
-.dialog-status-text::after {
-    content: "•";
-    margin-left: 8px;
-    color: #555769;
-}
-
-.dialog-last-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: #a7a8b8;
-}
-
-.empty-dialogs {
-    text-align: center;
-    padding: 60px 20px;
-    color: #9c9caf;
-}
-
-.empty-dialogs h3 {
-    color: white;
-    margin-bottom: 8px;
-}
-
 @media (max-width: 768px) {
-    body:not(:has(.chat-page)) .mobile-messages-page {
-        padding: 0 18px 20px;
+    body:has(.messages-page) {
+        background:
+            radial-gradient(circle at top left, rgba(107,77,255,.18), transparent 30%),
+            #090914 !important;
     }
 
-    body:not(:has(.chat-page)) .mobile-messages-header {
-        margin: 0 0 18px;
+    body:has(.messages-page) .feed {
+        height: calc(100dvh - 72px) !important;
+        padding: calc(env(safe-area-inset-top) + 18px) 23px 18px !important;
+        overflow-y: auto !important;
     }
 
-    body:not(:has(.chat-page)) .mobile-messages-header h1 {
-        font-size: 38px;
+    .messages-page {
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
     }
 
-    body:not(:has(.chat-page)) .mobile-search-btn {
-        width: 52px;
-        height: 52px;
-        border-radius: 18px;
+    .messages-head {
+        margin-bottom: 18px !important;
     }
 
-    body:not(:has(.chat-page)) .mobile-dialog-search {
-        height: 50px;
-        border-radius: 18px;
-        margin-bottom: 18px;
+    .messages-head h1 {
+        font-size: 34px !important;
+        letter-spacing: -1px !important;
     }
 
-    body:not(:has(.chat-page)) .dialog-tabs {
-        font-size: 18px;
-        gap: 26px;
-        margin-bottom: 14px;
+    .messages-head-actions {
+        gap: 10px !important;
     }
 
-    body:not(:has(.chat-page)) .dialog-list-item {
-        min-height: 78px;
-        padding: 9px 0;
-        border-radius: 0;
+    .messages-icon-btn {
+        width: 44px !important;
+        height: 44px !important;
+        border-radius: 15px !important;
+        font-size: 17px !important;
     }
 
-    body:not(:has(.chat-page)) .dialog-avatar-wrap,
-    body:not(:has(.chat-page)) .dialog-list-avatar {
-        width: 58px;
-        height: 58px;
-        flex-basis: 58px;
+    .messages-searchbar {
+        height: 48px !important;
+        padding: 0 16px !important;
+        margin-bottom: 20px !important;
+        border-radius: 16px !important;
+        background: rgba(255,255,255,.085) !important;
     }
 
-    body:not(:has(.chat-page)) .dialog-list-name {
-        font-size: 19px;
+    .messages-searchbar input {
+        font-size: 16px !important;
     }
 
-    body:not(:has(.chat-page)) .dialog-list-bottom {
-        font-size: 15px;
+    .messages-tabs {
+        gap: 31px !important;
+        margin-bottom: 20px !important;
     }
 
-    body:not(:has(.chat-page)) .dialog-list-time {
-        font-size: 14px;
+    .messages-tabs button {
+        font-size: 17px !important;
+        padding-bottom: 11px !important;
+    }
+
+    .messages-tabs button.active::after {
+        width: 36px !important;
+        height: 3px !important;
+    }
+
+    .messages-list {
+        gap: 8px !important;
+    }
+
+    .dialog-row {
+        min-height: 68px !important;
+        grid-template-columns: 58px 1fr auto !important;
+        gap: 12px !important;
+        padding: 5px 0 !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+    }
+
+    .dialog-avatar-wrap,
+    .dialog-row-avatar {
+        width: 55px !important;
+        height: 55px !important;
+    }
+
+    .dialog-online-dot {
+        width: 12px !important;
+        height: 12px !important;
+        right: 0 !important;
+        bottom: 1px !important;
+    }
+
+    .dialog-row-name {
+        font-size: 18px !important;
+        margin-bottom: 4px !important;
+    }
+
+    .dialog-row-preview {
+        font-size: 15px !important;
+    }
+
+    .dialog-row-meta {
+        min-width: 58px !important;
+        gap: 6px !important;
+        font-size: 14px !important;
+    }
+
+    .dialog-read-status {
+        font-size: 17px !important;
     }
 }
