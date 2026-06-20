@@ -22,11 +22,7 @@ async function initDb() {
 
     if (!hasDatabase) return;
 
-    await pool.query(`
-        DROP TABLE IF EXISTS friends CASCADE;
-        DROP TABLE IF EXISTS messages CASCADE;
-        DROP TABLE IF EXISTS users CASCADE;
-    `);
+    
 
     await pool.query(`
         CREATE TABLE IF NOT EXISTS users (
@@ -1319,26 +1315,46 @@ app.post("/upload-avatar", upload.single("avatar"), (req, res) => {
 });
 
 
-app.get("/feed", (req, res) => {
+app.get("/feed", async (req, res) => {
 
     if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
-    const users = JSON.parse(fs.readFileSync("data/users.json"));
-
-    const currentUser = users.find(
-    u => u.id === req.session.userId
+    const currentUserResult = await pool.query(
+    `
+    SELECT id, username, login, avatar, created_at
+    FROM users
+    WHERE id = $1
+    `,
+    [req.session.userId]
 );
 
-    const friends = users.filter(
-        u => currentUser.friends.includes(u.id)
-    );
+const currentUser = currentUserResult.rows[0];
+
+if (!currentUser) {
+    req.session.destroy(() => {
+        res.redirect("/login.html");
+    });
+    return;
+}
+
+const friendsResult = await pool.query(
+    `
+    SELECT u.id, u.username, u.login, u.avatar
+    FROM users u
+    JOIN friends f ON f.friend_id = u.id
+    WHERE f.user_id = $1
+    `,
+    [currentUser.id]
+);
+
+const friends = friendsResult.rows;
 
     let onlineList = "";
 
     friends.forEach(friend => {
-        const status = onlineUsers[friend.username] ? "🟢 Онлайн" : "⚫ Оффлайн";
+        const status = onlineUsers[friend.id] ? "🟢 Онлайн" : "⚫ Оффлайн";
 
         onlineList += `
             <div class="mini-user">
