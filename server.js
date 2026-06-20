@@ -65,12 +65,18 @@ fs.mkdirSync("public/avatars", { recursive: true });
 
 let onlineUsers = {};
 
-app.use(session({
+const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET || "lidus_secret_key",
     resave: false,
     saveUninitialized: false,
     cookie: { maxAge: 1000 * 60 * 60 * 24 * 30 }
-}));
+});
+
+app.use(sessionMiddleware);
+
+io.use((socket, next) => {
+    sessionMiddleware(socket.request, {}, next);
+});
 
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static("public"));
@@ -132,7 +138,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="/style.css?v=2000">
+        <link rel="stylesheet" href="/style.css?v=3001">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     </head>
     <body>
@@ -514,7 +520,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <link rel="manifest" href="/manifest.json">
             <meta name="theme-color" content="#6b4dff">
             <title>Lidus — Диалог с ${friend.username}</title>
-            <link rel="stylesheet" href="/style.css?v=2000">
+            <link rel="stylesheet" href="/style.css?v=3001">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
         </head>
         <body>
@@ -530,7 +536,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 const dialogId = "${dialogId}";
                 const currentUserId = "${currentUser.id}";
                 const friendId = "${friend.id}";
-                socket.emit("join dialog", dialogId);
+                socket.emit("join dialog", { dialogId, friendId });
 
                 function scrollChatBottom() { const messages = document.getElementById("messages"); requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; }); setTimeout(() => { messages.scrollTop = messages.scrollHeight; }, 100); }
                 function escapeHtml(text) { const div = document.createElement("div"); div.innerText = text || ""; return div.innerHTML; }
@@ -602,18 +608,47 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
         );
 
         const dialogId = [currentUser.id, friend.id].sort().join("-");
+        const newMessageId = insertResult.rows[0].id;
+        let readAt = insertResult.rows[0].read_at;
+
+        const roomSockets = await io.in(dialogId).fetchSockets();
+        const friendHasDialogOpen = roomSockets.some(s =>
+            Number(s.userId) === Number(friend.id) &&
+            String(s.activeDialogId) === String(dialogId)
+        );
+
+        if (friendHasDialogOpen) {
+            const readResult = await pool.query(
+                `UPDATE messages
+                 SET read_at = NOW()
+                 WHERE id = $1
+                 RETURNING read_at`,
+                [newMessageId]
+            );
+
+            readAt = readResult.rows[0]?.read_at || readAt;
+        }
+
         const messageForClient = {
-            id: insertResult.rows[0].id,
+            id: newMessageId,
             dialogId,
             fromId: currentUser.id,
             fromName: currentUser.username,
             text,
             photos,
             time: formatTime(insertResult.rows[0].created_at),
-            readAt: insertResult.rows[0].read_at
+            readAt
         };
 
         io.to(dialogId).emit("private message", messageForClient);
+
+        if (readAt) {
+            io.to(dialogId).emit("messages read", {
+                readerId: friend.id,
+                messageIds: [newMessageId]
+            });
+        }
+
         res.json({ success: true, message: messageForClient });
     } catch (error) {
         console.error(error);
@@ -623,7 +658,40 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
 
 io.on("connection", (socket) => {
     console.log("Socket.IO подключён");
-    socket.on("join dialog", (dialogId) => socket.join(dialogId));
+
+    socket.on("join dialog", async (data) => {
+        const dialogId = typeof data === "string" ? data : data?.dialogId;
+        const friendId = Number(data?.friendId);
+        const userId = Number(socket.request.session?.userId);
+
+        if (!dialogId || !userId) return;
+
+        socket.join(dialogId);
+        socket.userId = userId;
+        socket.activeDialogId = dialogId;
+        socket.activeFriendId = friendId || null;
+
+        if (friendId) {
+            try {
+                const readResult = await pool.query(
+                    `UPDATE messages
+                     SET read_at = NOW()
+                     WHERE from_id = $1 AND to_id = $2 AND read_at IS NULL
+                     RETURNING id`,
+                    [friendId, userId]
+                );
+
+                if (readResult.rows.length > 0) {
+                    io.to(dialogId).emit("messages read", {
+                        readerId: userId,
+                        messageIds: readResult.rows.map(row => row.id)
+                    });
+                }
+            } catch (error) {
+                console.error("Ошибка отметки прочтения:", error);
+            }
+        }
+    });
 });
 
 const PORT = process.env.PORT || 3000;
