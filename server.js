@@ -1548,161 +1548,86 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
     `);
 });
 
-app.get("/messages", (req, res) => {
+app.get("/messages", async (req, res) => {
 
     if (!req.session.userId) {
         return res.redirect("/login.html");
     }
 
-    const users = JSON.parse(fs.readFileSync("data/users.json"));
-    const messages = JSON.parse(fs.readFileSync("data/messages.json"));
-
-    const currentUser = users.find(
-    u => u.id === req.session.userId
-);
-
-    const friends = users.filter(
-        u => currentUser.friends.includes(u.id)
+    const currentUserResult = await pool.query(
+        `
+        SELECT id, username, login, avatar
+        FROM users
+        WHERE id = $1
+        `,
+        [req.session.userId]
     );
 
-    let list = "";
+    const currentUser = currentUserResult.rows[0];
 
-    friends.forEach(friend => {
+    if (!currentUser) {
+        req.session.destroy(() => {
+            res.redirect("/login.html");
+        });
+        return;
+    }
 
-        const dialogMessages = messages.filter(msg =>
-            (msg.from === currentUser.id && msg.to === friend.id) ||
-            (msg.from === friend.id && msg.to === currentUser.id)
-        );
-
-        const lastMessage = dialogMessages[dialogMessages.length - 1];
-
-        const status = onlineUsers[friend.username]
-            ? "🟢 Онлайн"
-            : "⚫ Оффлайн";
-
-        list += `
-            <a class="dialog-card" href="/dialog/${friend.id}">
-                <img src="${friend.avatar}" class="mini-avatar">
-
-                <div class="dialog-info">
-                    <b>${friend.username}</b>
-                    <p>${lastMessage ? lastMessage.text : "Нет сообщений"}</p>
-                    <small>${status}</small>
-                </div>
-            </a>
-        `;
-    });
+    const avatar = currentUser.avatar || "/images/logo.png";
 
     res.send(`
     <html>
     <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-
-<link rel="manifest" href="/manifest.json">
-
-<meta name="theme-color" content="#6b4dff">
-
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Lidus">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
         <title>Lidus — Сообщения</title>
-
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-        <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
-
-        <link rel="stylesheet" href="/style.css?v=1000">
-
-        <link rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
+        <link rel="stylesheet" href="/style.css?v=1001">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     </head>
 
     <body>
-
         <div class="app-layout">
 
             <aside class="left-menu">
-
                 <div class="brand-logo">
                     <div class="logo-app-icon">L</div>
                     <div class="logo-word">Lidus</div>
                 </div>
 
-                <a href="/feed">
-                    <i class="fa-solid fa-house"></i>
-                    Лента
-                </a>
-
-                <a href="/profile">
-                    <i class="fa-solid fa-user"></i>
-                    Профиль
-                </a>
-
-                <a href="/friends">
-                    <i class="fa-solid fa-user-group"></i>
-                    Друзья
-                </a>
-
-                <a href="/users">
-                    <i class="fa-solid fa-magnifying-glass"></i>
-                    Найти людей
-                </a>
-
-                <a href="/messages" class="active">
-                    <i class="fa-solid fa-comments"></i>
-                    Сообщения
-                </a>
-
-                <a href="/logout">
-                    <i class="fa-solid fa-right-from-bracket"></i>
-                    Выйти
-                </a>
-
-                
-
+                <a href="/feed"><i class="fa-solid fa-house"></i> Лента</a>
+                <a href="/profile"><i class="fa-solid fa-user"></i> Профиль</a>
+                <a href="/friends"><i class="fa-solid fa-user-group"></i> Друзья</a>
+                <a href="/users"><i class="fa-solid fa-magnifying-glass"></i> Найти людей</a>
+                <a href="/messages" class="active"><i class="fa-solid fa-comments"></i> Сообщения</a>
+                <a href="/logout"><i class="fa-solid fa-right-from-bracket"></i> Выйти</a>
             </aside>
 
             <main class="feed">
 
                 <div class="topbar">
-
                     <div class="search-box">
                         <i class="fa-solid fa-magnifying-glass"></i>
                         <input placeholder="Поиск по сообщениям">
                     </div>
 
                     <div class="topbar-right">
-
-                        <div class="top-icon">
-                            <i class="fa-solid fa-bell"></i>
-                        </div>
-
-                        <div class="top-icon">
-                            <i class="fa-solid fa-envelope"></i>
-                        </div>
+                        <div class="top-icon"><i class="fa-solid fa-bell"></i></div>
+                        <div class="top-icon"><i class="fa-solid fa-envelope"></i></div>
 
                         <div class="profile-mini">
                             <img src="${avatar}" class="top-avatar">
                             <span>${currentUser.username}</span>
                         </div>
-
                     </div>
-
                 </div>
 
                 <div class="mobile-app-header">
-    <div class="mobile-app-title">Сообщения</div>
+                    <div class="mobile-app-title">Сообщения</div>
 
-    <div class="mobile-app-actions">
-        <a href="/users">
-            <i class="fa-solid fa-magnifying-glass"></i>
-        </a>
-    </div>
-</div>
+                    <div class="mobile-app-actions">
+                        <a href="/users">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </a>
+                    </div>
+                </div>
 
                 <div class="feed-title">
                     <h1>Сообщения</h1>
@@ -1710,53 +1635,37 @@ app.get("/messages", (req, res) => {
                 </div>
 
                 <div class="post-card">
-
-                    ${list || `
-                        <div style="text-align:center;padding:40px;">
-                            <h3>Сообщений пока нет</h3>
-                            <p class="muted">
-                                Добавьте друзей и начните общение
-                            </p>
-                        </div>
-                    `}
-
+                    <div style="text-align:center;padding:40px;">
+                        <h3>Сообщений пока нет</h3>
+                        <p class="muted">
+                            Позже подключим сообщения к PostgreSQL
+                        </p>
+                    </div>
                 </div>
 
             </main>
 
             <aside class="right-panel">
-
                 <div class="side-card">
                     <h3>Статистика</h3>
-
-                    <p>💬 Диалогов: ${friends.length}</p>
-
-                    <p>
-                        🟢 Онлайн:
-                        ${
-                            friends.filter(
-                                friend => onlineUsers[friend.username]
-                            ).length
-                        }
-                    </p>
+                    <p>💬 Диалогов: 0</p>
+                    <p>🟢 Онлайн: 0</p>
                 </div>
 
                 <div class="side-card">
                     <h3>Подсказка</h3>
-
                     <p>💬 Выберите диалог слева</p>
                     <p>👥 Добавляйте новых друзей</p>
                     <p>🔒 Сообщения приватны</p>
                 </div>
-
             </aside>
 
         </div>
-
     </body>
     </html>
     `);
 });
+
 io.on("connection", (socket) => {
 
     console.log("Socket.IO подключён");
