@@ -1530,3 +1530,453 @@ gap:12px;
         color: #9a6cff !important;
     }
 }
+
+
+/* ===== LIDUS LOGIN — CLEAN GRADIENT STYLE ===== */
+
+.lidus-login-body {
+    min-height: 100vh;
+    margin: 0;
+    overflow-x: hidden;
+    color: #ffffff;
+    font-family: 'Inter', Arial, sans-serif;
+    background:
+        radial-gradient(circle at top left, rgba(139, 92, 246, .22), transparent 34%),
+        radial-gradient(circle at top right, rgba(99, 102, 241, .16), transparent 38%),
+        radial-gradient(circle at 50% 100%, rgba(139, 92, 246, .10), transparent 42%),
+        #050510;
+}
+
+.lidus-login-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.lidus-login-bg::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px);
+    background-size: 72px 72px;
+    opacity: .13;
+    mask-image: linear-gradient(to bottom, black 0%, transparent 85%);
+}
+
+.lidus-login-bg::after {
+    content: "";
+    position: absolute;
+    width: 620px;
+    height: 620px;
+    right: -260px;
+    top: -160px;
+    border-radius: 50%;
+    background: rgba(139, 92, 246, .18);
+    filter: blur(70px);
+}
+
+.lidus-login-page {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(360px, 470px) minmax(340px, 470px);
+    gap: 80px;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 28px;
+    box-sizing: border-box;
+}
+
+.lidus-login-card {
+    width: 100%;
+    padding: 34px;
+    border-radius: 28px;
+    background: rgba(16, 16, 29, .82);
+    border: 1px solid rgba(255,255,255,.08);
+    box-shadow:
+        0 28px 90px rgba(0,0,0,.38),
+        0 0 60px rgba(139, 92, 246, .16),
+        inset 0 1px 0 rgba(255,255,255,.05);
+    backdrop-filter: blur(18px);
+}
+
+.lidus-login-brand {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 34px;
+}
+
+.lidus-login-brand img {
+    width: 76px;
+    height: 76px;
+    border-radius: 22px;
+    object-fit: cover;
+    box-shadow:
+        0 0 34px rgba(139, 92, 246, .46),
+        0 0 70px rgba(139, 92, 246, .14);
+}
+
+.lidus-login-brand h1 {
+    margin: 0;
+    font-size: 30px;
+    line-height: 1;
+    font-weight: 900;
+    letter-spacing: 1px;
+}
+
+.lidus-login-brand h1 span {
+    color: #8b5cf6;
+}
+
+.lidus-login-brand p {
+    margin: 8px 0 0;
+    color: #9ca3af;
+    font-size: 14px;
+}
+
+.lidus-login-title {
+    margin-bottom: 26px;
+}
+
+.lidus-login-title small {
+    display: block;
+    color: #8b5cf6;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+}
+
+.lidus-login-title h2 {
+    margin: 0 0 10px;
+    font-size: 34px;
+    line-height: 1.1;
+}
+
+.lidus-login-title p {
+    margin: 0;
+    color: #9ca3af;
+    font-size: 15px;
+}
+
+.lidus-login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.lidus-login-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lidus-login-field > span {
+    color: #d9d9ff;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.lidus-login-input {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    border-radius: 16px;
+    background: #141422;
+    border: 1px solid rgba(255,255,255,.07);
+    transition: .18s ease;
+    overflow: hidden;
+}
+
+.lidus-login-input:focus-within {
+    border-color: rgba(139, 92, 246, .72);
+    box-shadow: 0 0 0 4px rgba(139, 92, 246, .14);
+}
+
+.lidus-login-input i {
+    color: #8b5cf6;
+    font-size: 16px;
+    width: 18px;
+    text-align: center;
+}
+
+.lidus-login-input input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    height: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+
+    border: 0;
+    outline: 0;
+    background: transparent !important;
+
+    color: white;
+    font-size: 16px;
+    line-height: 56px;
+}
+
+.lidus-login-input input::placeholder {
+    color: #6f7283;
+}
+
+.lidus-login-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin: 2px 0 6px;
+}
+
+.lidus-login-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #b8b8cc;
+    font-size: 14px;
+}
+
+.lidus-login-check input {
+    accent-color: #8b5cf6;
+}
+
+.lidus-login-link {
+    color: #9a6cff;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.lidus-login-btn {
+    height: 58px;
+    border: 0;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #6b4dff, #9a6cff);
+    color: white;
+    font-size: 17px;
+    font-weight: 900;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    box-shadow: 0 16px 42px rgba(139, 92, 246, .25);
+}
+
+.lidus-login-btn:hover {
+    transform: translateY(-2px);
+}
+
+.lidus-login-btn b {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: rgba(255,255,255,.14);
+}
+
+.lidus-login-bottom {
+    margin-top: 24px;
+    padding-top: 22px;
+    border-top: 1px solid rgba(255,255,255,.07);
+    text-align: center;
+    color: #9ca3af;
+}
+
+.lidus-login-bottom a {
+    color: #9a6cff;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.lidus-login-side {
+    max-width: 470px;
+}
+
+.lidus-side-badge {
+    width: fit-content;
+    margin-bottom: 18px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(139, 92, 246, .13);
+    border: 1px solid rgba(139, 92, 246, .22);
+    color: #c4b5fd;
+    font-weight: 800;
+    font-size: 13px;
+}
+
+.lidus-login-side h2 {
+    margin: 0 0 16px;
+    font-size: 52px;
+    line-height: .98;
+    letter-spacing: -2px;
+}
+
+.lidus-login-side h2 span {
+    color: #8b5cf6;
+}
+
+.lidus-login-side p {
+    margin: 0;
+    color: #a7a7bb;
+    font-size: 18px;
+    line-height: 1.55;
+}
+
+.lidus-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 28px;
+}
+
+.lidus-feature {
+    padding: 16px;
+    border-radius: 20px;
+    background: rgba(16, 16, 29, .64);
+    border: 1px solid rgba(255,255,255,.07);
+    backdrop-filter: blur(12px);
+}
+
+.lidus-feature i {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 12px;
+    border-radius: 14px;
+    background: rgba(139, 92, 246, .16);
+    color: #c4b5fd;
+    font-style: normal;
+}
+
+.lidus-feature b {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+
+.lidus-feature span {
+    color: #8f90a3;
+    font-size: 12px;
+}
+
+@media (max-width: 920px) {
+    .lidus-login-body {
+        overflow-y: auto;
+    }
+
+    .lidus-login-page {
+        grid-template-columns: 1fr;
+        max-width: 500px;
+        margin: 0 auto;
+        gap: 24px;
+        align-items: start;
+        padding: calc(env(safe-area-inset-top) + 22px) 16px 28px;
+    }
+
+    .lidus-login-side {
+        order: -1;
+        text-align: center;
+    }
+
+    .lidus-side-badge {
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .lidus-login-side h2 {
+        font-size: 34px;
+        letter-spacing: -1px;
+    }
+
+    .lidus-login-side p {
+        font-size: 15px;
+    }
+
+    .lidus-feature-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 18px;
+    }
+
+    .lidus-feature {
+        padding: 12px 8px;
+        border-radius: 16px;
+    }
+
+    .lidus-feature i {
+        width: 38px;
+        height: 38px;
+        margin: 0 auto 8px;
+    }
+
+    .lidus-feature span {
+        display: none;
+    }
+
+    .lidus-login-card {
+        padding: 24px;
+        border-radius: 24px;
+    }
+
+    .lidus-login-brand {
+        justify-content: center;
+        text-align: center;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .lidus-login-brand img {
+        width: 72px;
+        height: 72px;
+    }
+
+    .lidus-login-brand h1 {
+        font-size: 27px;
+    }
+
+    .lidus-login-title {
+        text-align: center;
+    }
+
+    .lidus-login-title h2 {
+        font-size: 28px;
+    }
+
+    .lidus-login-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 390px) {
+    .lidus-login-card {
+        padding: 20px;
+    }
+
+    .lidus-feature-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .lidus-feature {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-align: left;
+    }
+
+    .lidus-feature i {
+        margin: 0;
+    }
+}
+

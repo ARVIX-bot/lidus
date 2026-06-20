@@ -1,21 +1,131 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    <title>Вход</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+
+    <title>Lidus Orbit — Вход</title>
+
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#050510">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Lidus">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <link rel="stylesheet" href="/style.css?v=5004">
 </head>
-<body>
 
-<h1>Вход</h1>
+<body class="lidus-login-body">
 
-<form method="POST" action="/login">
-    <input type="tel" name="phone" placeholder="Номер телефона" required>
-    <br><br>
+    <div class="lidus-login-bg"></div>
 
-    <input type="password" name="password" placeholder="Пароль" required>
-    <br><br>
+    <main class="lidus-login-page">
 
-    <button type="submit">Войти</button>
-</form>
+        <section class="lidus-login-card">
+
+            <div class="lidus-login-brand">
+                <img src="/images/logo.png" alt="Lidus Orbit">
+
+                <div>
+                    <h1>LIDUS <span>ORBIT</span></h1>
+                    <p>private social network</p>
+                </div>
+            </div>
+
+            <div class="lidus-login-title">
+                <small>WELCOME BACK</small>
+                <h2>Вход в аккаунт</h2>
+                <p>Вернись на свою орбиту общения</p>
+            </div>
+
+            <form method="POST" action="/login" class="lidus-login-form">
+
+                <label class="lidus-login-field">
+    <span>Логин</span>
+
+    <div class="lidus-login-input">
+        <i class="fa-regular fa-circle-user"></i>
+
+        <input
+            type="text"
+            name="login"
+            placeholder="Введите логин"
+            autocomplete="username"
+            required>
+    </div>
+</label>
+
+                <label class="lidus-login-field">
+    <span>Пароль</span>
+
+    <div class="lidus-login-input">
+        <i class="fa-solid fa-shield-halved"></i>
+
+        <input
+            type="password"
+            name="password"
+            placeholder="Введите пароль"
+            autocomplete="current-password"
+            required>
+    </div>
+</label>
+
+                <div class="lidus-login-row">
+                    <label class="lidus-login-check">
+                        <input type="checkbox" checked>
+                        <span>Запомнить меня</span>
+                    </label>
+
+                    <a href="#" class="lidus-login-link">Забыли пароль?</a>
+                </div>
+
+                <button type="submit" class="lidus-login-btn">
+                    Войти
+                    <b>→</b>
+                </button>
+
+            </form>
+
+            <p class="lidus-login-bottom">
+                Нет аккаунта?
+                <a href="/register.html">Создать аккаунт</a>
+            </p>
+
+        </section>
+
+        <section class="lidus-login-side">
+            <div class="lidus-side-badge">Lidus Orbit</div>
+
+            <h2>Связь <span>без шума.</span></h2>
+
+            <p>
+                Личное пространство для общения, друзей и приватных диалогов
+                в едином стиле Lidus.
+            </p>
+
+            <div class="lidus-feature-grid">
+                <div class="lidus-feature">
+                    <i>🛡</i>
+                    <b>Private</b>
+                    <span>личное пространство</span>
+                </div>
+
+                <div class="lidus-feature">
+                    <i>💬</i>
+                    <b>Messenger</b>
+                    <span>быстрые диалоги</span>
+                </div>
+
+                <div class="lidus-feature">
+                    <i>🪐</i>
+                    <b>Orbit UI</b>
+                    <span>единый стиль</span>
+                </div>
+            </div>
+        </section>
+
+    </main>
 
 </body>
 </html>

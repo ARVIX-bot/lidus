@@ -9,12 +9,21 @@ const session = require("express-session");
 
 const { Pool } = require("pg");
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
-});
+const hasDatabase = !!process.env.DATABASE_URL;
+
+const pool = hasDatabase
+    ? new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false }
+    })
+    : null;
 
 async function initDb() {
+    if (!hasDatabase) {
+        console.log("PostgreSQL не подключён локально, работаем пока через JSON");
+        return;
+    }
+
     await pool.query(`
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -335,14 +344,21 @@ app.get("/profile", (req, res) => {
     `);
 });
 app.get("/logout", (req, res) => {
-    const user = users.find(u => u.id === req.session.userId);
-if (user) delete onlineUsers[user.username];
+
+    const users = JSON.parse(fs.readFileSync("data/users.json"));
+
+    const user = users.find(
+        u => u.id === req.session.userId
+    );
+
+    if (user) {
+        delete onlineUsers[user.username];
+    }
+
     io.emit("online update", onlineUsers);
 
     req.session.destroy(() => {
-
-        res.redirect("/");
-
+        res.redirect("/login.html");
     });
 
 });
