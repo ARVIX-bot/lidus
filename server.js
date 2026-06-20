@@ -6,11 +6,23 @@ const fs = require("fs");
 const session = require("express-session");
 const { Server } = require("socket.io");
 const { Pool } = require("pg");
+const webpush = require("web-push");
 
 const hasDatabase = !!process.env.DATABASE_URL;
 const pool = hasDatabase
     ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
     : null;
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+        "mailto:admin@lidus.local",
+        VAPID_PUBLIC_KEY,
+        VAPID_PRIVATE_KEY
+    );
+}
 
 async function initDb() {
     if (!hasDatabase) {
@@ -55,6 +67,27 @@ async function initDb() {
         ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
     `);
 
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            type TEXT DEFAULT 'message',
+            title TEXT NOT NULL,
+            body TEXT,
+            link TEXT,
+            is_read BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            endpoint TEXT UNIQUE NOT NULL,
+            subscription JSONB NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+
     console.log("PostgreSQL подключён, таблицы готовы");
 }
 
@@ -84,6 +117,7 @@ io.use((socket, next) => {
 });
 
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
 
 function requireAuth(req, res, next) {
@@ -198,9 +232,120 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
             </main>
             <aside class="right-panel">${rightPanel}</aside>
         </div>
+        <script src="/push.js?v=1"></script>
     </body>
     </html>`;
 }
+
+
+function isPushConfigured() {
+    return !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+}
+
+async function createNotification(userId, type, title, body, link) {
+    if (!hasDatabase || !userId) return;
+
+    try {
+        await pool.query(
+            `INSERT INTO notifications (user_id, type, title, body, link)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [userId, type, title, body || "", link || "/notifications"]
+        );
+    } catch (error) {
+        console.error("Ошибка создания уведомления:", error);
+    }
+}
+
+async function sendPushNotification(userId, payload) {
+    if (!isPushConfigured()) return;
+
+    try {
+        const result = await pool.query(
+            `SELECT id, subscription FROM push_subscriptions WHERE user_id = $1`,
+            [userId]
+        );
+
+        const data = JSON.stringify(payload);
+
+        for (const row of result.rows) {
+            try {
+                await webpush.sendNotification(row.subscription, data);
+            } catch (error) {
+                if (error.statusCode === 404 || error.statusCode === 410) {
+                    await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.id]);
+                } else {
+                    console.error("Ошибка push уведомления:", error);
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Ошибка отправки push:", error);
+    }
+}
+
+
+app.get("/vapid-public-key", requireAuth, (req, res) => {
+    res.json({ publicKey: VAPID_PUBLIC_KEY || null });
+});
+
+app.post("/save-subscription", requireAuth, async (req, res) => {
+    if (!isPushConfigured()) {
+        return res.status(503).json({ success: false, error: "Push не настроен на сервере" });
+    }
+
+    const subscription = req.body;
+
+    if (!subscription || !subscription.endpoint) {
+        return res.status(400).json({ success: false, error: "Нет push-подписки" });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO push_subscriptions (user_id, endpoint, subscription)
+             VALUES ($1, $2, $3::jsonb)
+             ON CONFLICT (endpoint)
+             DO UPDATE SET user_id = EXCLUDED.user_id, subscription = EXCLUDED.subscription`,
+            [req.session.userId, subscription.endpoint, JSON.stringify(subscription)]
+        );
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Ошибка сохранения push-подписки:", error);
+        res.status(500).json({ success: false, error: "Ошибка сохранения подписки" });
+    }
+});
+
+app.get("/notifications", requireAuth, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, type, title, body, link, is_read, created_at
+             FROM notifications
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT 50`,
+            [req.session.userId]
+        );
+
+        res.json({ notifications: result.rows });
+    } catch (error) {
+        console.error("Ошибка получения уведомлений:", error);
+        res.status(500).json({ notifications: [] });
+    }
+});
+
+app.post("/notifications/read", requireAuth, async (req, res) => {
+    try {
+        await pool.query(
+            `UPDATE notifications SET is_read = TRUE WHERE user_id = $1`,
+            [req.session.userId]
+        );
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Ошибка чтения уведомлений:", error);
+        res.status(500).json({ success: false });
+    }
+});
 
 app.post("/register", async (req, res) => {
     const { username, login, email, password } = req.body;
@@ -727,6 +872,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 function closePhoto() { document.getElementById("photoModal").style.display = "none"; }
                 window.addEventListener("load", () => setTimeout(scrollChatBottom, 100));
             </script>
+            <script src="/push.js?v=1"></script>
         </body>
         </html>`);
     } catch (error) {
@@ -788,6 +934,23 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
         };
 
         io.to(dialogId).emit("private message", messageForClient);
+
+        const pushText = text && text.trim() ? text.trim() : (photos.length ? "📷 Фото" : "Новое сообщение");
+        const notificationTitle = currentUser.username;
+        const notificationBody = pushText.length > 80 ? pushText.slice(0, 80) + "…" : pushText;
+        const notificationLink = "/dialog/" + currentUser.id;
+
+        await createNotification(friend.id, "message", notificationTitle, notificationBody, notificationLink);
+
+        if (!friendHasDialogOpen) {
+            await sendPushNotification(friend.id, {
+                title: notificationTitle,
+                body: notificationBody,
+                url: notificationLink,
+                icon: "/assets/icon-192.png",
+                badge: "/assets/icon-192.png"
+            });
+        }
 
         if (readAt) {
             io.to(dialogId).emit("messages read", {

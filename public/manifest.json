@@ -18,5 +18,7 @@
       "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "id": "/lidus",
+  "description": "Lidus Orbit private social network"
 }
