@@ -266,7 +266,7 @@ app.get("/profile", (req, res) => {
                         </div>
 
                         <div class="profile-mini">
-                            <img src="${currentUser.avatar}" class="top-avatar">
+                            <img src="${avatar}" class="top-avatar">
                             <span>${currentUser.username}</span>
                         </div>
 
@@ -294,7 +294,7 @@ app.get("/profile", (req, res) => {
                     <div class="profile-cover"></div>
 
                     <div class="profile-main">
-                        <img class="profile-avatar-big" src="${currentUser.avatar}">
+                        <img class="profile-avatar-big" src="${avatar}">
 
                         <div class="profile-info">
                             <h1>${currentUser.username}</h1>
@@ -517,7 +517,7 @@ app.get("/users", (req, res) => {
                         </div>
 
                         <div class="profile-mini">
-                            <img src="${currentUser.avatar}" class="top-avatar">
+                            <img src="${avatar}" class="top-avatar">
                             <span>${currentUser.username}</span>
                         </div>
 
@@ -736,7 +736,7 @@ app.get("/friends", (req, res) => {
                         </div>
 
                         <div class="profile-mini">
-                            <img src="${currentUser.avatar}" class="top-avatar">
+                            <img src="${avatar}" class="top-avatar">
                             <span>${currentUser.username}</span>
                         </div>
 
@@ -1339,6 +1339,8 @@ if (!currentUser) {
     return;
 }
 
+const avatar = currentUser.avatar || "/images/logo.png";
+
 const friendsResult = await pool.query(
     `
     SELECT u.id, u.username, u.login, u.avatar
@@ -1451,7 +1453,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
         </div>
 
         <div class="profile-mini">
-            <img src="${currentUser.avatar}" class="top-avatar">
+            <img src="${avatar}" class="top-avatar">
             <span>${currentUser.username}</span>
         </div>
 
@@ -1477,7 +1479,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
 </div>
 
                 <div class="post-create pro-card">
-    <img src="${currentUser.avatar}" class="mini-avatar">
+    <img src="${avatar}" class="mini-avatar">
 
     <div class="post-input-area">
         <input placeholder="Что у вас нового?">
@@ -1493,7 +1495,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
 
                 <div class="post-card">
                     <div class="post-header">
-                        <img src="${currentUser.avatar}" class="mini-avatar">
+                        <img src="${avatar}" class="mini-avatar">
                         <div>
                             <b>${currentUser.username}</b>
                             <p>Сегодня</p>
@@ -1511,7 +1513,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
 
                 <div class="post-card">
                     <div class="post-header">
-                        <img src="/avatars/default.png" class="mini-avatar">
+                        <img src="/images/logo.png" class="mini-avatar">
                         <div>
                             <b>Lidus</b>
                             <p>Сегодня</p>
@@ -1684,7 +1686,7 @@ app.get("/messages", (req, res) => {
                         </div>
 
                         <div class="profile-mini">
-                            <img src="${currentUser.avatar}" class="top-avatar">
+                            <img src="${avatar}" class="top-avatar">
                             <span>${currentUser.username}</span>
                         </div>
 
