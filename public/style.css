@@ -2112,3 +2112,289 @@ gap:12px;
         max-width: 480px;
     }
 }
+
+/* ===== MESSAGES LIST LIKE MOBILE MESSENGER ===== */
+
+.mobile-messages-page {
+    width: 100%;
+}
+
+.mobile-messages-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+
+.mobile-messages-header h1 {
+    margin: 0;
+    font-size: 42px;
+    line-height: 1;
+    font-weight: 900;
+    letter-spacing: -1px;
+}
+
+.mobile-search-btn {
+    width: 58px;
+    height: 58px;
+    border-radius: 20px;
+    background: rgba(255,255,255,.07);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    font-size: 24px;
+}
+
+.mobile-dialog-search {
+    height: 56px;
+    border-radius: 20px;
+    background: rgba(255,255,255,.07);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 18px;
+    margin-bottom: 18px;
+    color: #8f90a3;
+}
+
+.mobile-dialog-search input {
+    flex: 1;
+    height: 100%;
+    background: transparent;
+    border: 0;
+    outline: 0;
+    color: white;
+    font-size: 17px;
+    padding: 0;
+}
+
+.mobile-dialog-search input::placeholder {
+    color: #8f90a3;
+}
+
+.dialog-tabs {
+    display: flex;
+    gap: 28px;
+    margin: 0 0 18px;
+    color: #a5a6b8;
+    font-size: 20px;
+    font-weight: 800;
+}
+
+.dialog-tabs span {
+    position: relative;
+    padding-bottom: 10px;
+}
+
+.dialog-tabs span.active {
+    color: white;
+}
+
+.dialog-tabs span.active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #6b4dff, #9a6cff);
+}
+
+.dialog-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.dialog-list-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 82px;
+    padding: 10px 2px;
+    color: white;
+    text-decoration: none;
+    border-radius: 18px;
+    transition: .18s ease;
+}
+
+.dialog-list-item:hover {
+    background: rgba(255,255,255,.04);
+}
+
+.dialog-avatar-wrap {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+}
+
+.dialog-list-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+}
+
+.dialog-online-dot {
+    position: absolute;
+    right: 1px;
+    bottom: 1px;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #5b5d6b;
+    border: 3px solid #090914;
+    display: none;
+}
+
+.dialog-online-dot.is-online {
+    display: block;
+    background: #20d34a;
+}
+
+.dialog-list-main {
+    flex: 1;
+    min-width: 0;
+    padding-bottom: 2px;
+}
+
+.dialog-list-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 5px;
+}
+
+.dialog-list-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 21px;
+    font-weight: 850;
+    letter-spacing: -.2px;
+}
+
+.dialog-list-time {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #9c9caf;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.dialog-check {
+    color: #4aa3ff;
+    font-size: 17px;
+    font-weight: 900;
+    letter-spacing: -4px;
+    margin-right: 3px;
+}
+
+.dialog-check.is-read {
+    color: #43c7ff;
+}
+
+.dialog-list-bottom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: #9c9caf;
+    font-size: 16px;
+}
+
+.dialog-status-text {
+    color: #9c9caf;
+    white-space: nowrap;
+}
+
+.dialog-status-text::after {
+    content: "•";
+    margin-left: 8px;
+    color: #555769;
+}
+
+.dialog-last-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #a7a8b8;
+}
+
+.empty-dialogs {
+    text-align: center;
+    padding: 60px 20px;
+    color: #9c9caf;
+}
+
+.empty-dialogs h3 {
+    color: white;
+    margin-bottom: 8px;
+}
+
+@media (max-width: 768px) {
+    body:not(:has(.chat-page)) .mobile-messages-page {
+        padding: 0 18px 20px;
+    }
+
+    body:not(:has(.chat-page)) .mobile-messages-header {
+        margin: 0 0 18px;
+    }
+
+    body:not(:has(.chat-page)) .mobile-messages-header h1 {
+        font-size: 38px;
+    }
+
+    body:not(:has(.chat-page)) .mobile-search-btn {
+        width: 52px;
+        height: 52px;
+        border-radius: 18px;
+    }
+
+    body:not(:has(.chat-page)) .mobile-dialog-search {
+        height: 50px;
+        border-radius: 18px;
+        margin-bottom: 18px;
+    }
+
+    body:not(:has(.chat-page)) .dialog-tabs {
+        font-size: 18px;
+        gap: 26px;
+        margin-bottom: 14px;
+    }
+
+    body:not(:has(.chat-page)) .dialog-list-item {
+        min-height: 78px;
+        padding: 9px 0;
+        border-radius: 0;
+    }
+
+    body:not(:has(.chat-page)) .dialog-avatar-wrap,
+    body:not(:has(.chat-page)) .dialog-list-avatar {
+        width: 58px;
+        height: 58px;
+        flex-basis: 58px;
+    }
+
+    body:not(:has(.chat-page)) .dialog-list-name {
+        font-size: 19px;
+    }
+
+    body:not(:has(.chat-page)) .dialog-list-bottom {
+        font-size: 15px;
+    }
+
+    body:not(:has(.chat-page)) .dialog-list-time {
+        font-size: 14px;
+    }
+}
