@@ -751,6 +751,17 @@ app.get("/messages", requireAuth, async (req, res) => {
     }
 });
 
+
+
+app.get("/clear-push", requireAuth, async (req, res) => {
+    await pool.query(
+        "DELETE FROM push_subscriptions WHERE user_id = $1",
+        [req.session.userId]
+    );
+
+    res.send("Push subscriptions cleared");
+});
+
 app.get("/dialog/:id", requireAuth, async (req, res) => {
     try {
         const currentUser = await getCurrentUser(req);
