@@ -45,6 +45,11 @@ async function initDb() {
         );
     `);
 
+    await pool.query(`
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS read_at TIMESTAMP;
+    `);
+
     console.log("PostgreSQL подключён, таблицы готовы");
 }
 
@@ -86,6 +91,14 @@ async function getCurrentUser(req) {
 function formatDate(value) {
     if (!value) return "—";
     return new Date(value).toLocaleString("ru-RU");
+}
+
+function formatTime(value) {
+    if (!value) return "";
+    return new Date(value).toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
 }
 
 function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
@@ -458,8 +471,24 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
         const friend = friendResult.rows[0];
         if (!friend) return res.status(404).send("Пользователь не найден");
 
+        const readResult = await pool.query(
+            `UPDATE messages
+             SET read_at = NOW()
+             WHERE from_id = $1 AND to_id = $2 AND read_at IS NULL
+             RETURNING id`,
+            [friend.id, currentUser.id]
+        );
+
+        const dialogId = [currentUser.id, friend.id].sort().join("-");
+        if (readResult.rows.length > 0) {
+            io.to(dialogId).emit("messages read", {
+                readerId: currentUser.id,
+                messageIds: readResult.rows.map(row => row.id)
+            });
+        }
+
         const messagesResult = await pool.query(
-            `SELECT m.id, m.from_id, m.to_id, m.text, m.photos, m.created_at, u.username AS sender_name
+            `SELECT m.id, m.from_id, m.to_id, m.text, m.photos, m.created_at, m.read_at, u.username AS sender_name
              FROM messages m
              JOIN users u ON u.id = m.from_id
              WHERE (m.from_id = $1 AND m.to_id = $2) OR (m.from_id = $2 AND m.to_id = $1)
@@ -471,10 +500,11 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             const isMe = msg.from_id === currentUser.id;
             const photos = Array.isArray(msg.photos) ? msg.photos : [];
             const photoHtml = photos.length ? `<div class="message-gallery">${photos.map(photo => `<img src="${photo}" class="chat-photo" onclick="openPhoto(this.src)">`).join("")}</div>` : "";
-            return `<div class="message-row ${isMe ? "my-message" : "friend-message"}"><div class="message-bubble"><b>${msg.sender_name}</b>${msg.text ? `<p>${msg.text}</p>` : ""}${photoHtml}<small>${formatDate(msg.created_at)}</small></div></div>`;
+            const time = formatTime(msg.created_at);
+            const readIcon = isMe ? `<span class="read-status" id="read-status-${msg.id}">${msg.read_at ? "✓✓" : "✓"}</span>` : "";
+            return `<div class="message-row ${isMe ? "my-message" : "friend-message"}" data-message-id="${msg.id}"><div class="message-bubble"><b>${msg.sender_name}</b>${msg.text ? `<p>${msg.text}</p>` : ""}${photoHtml}<small>${time} ${readIcon}</small></div></div>`;
         }).join("");
 
-        const dialogId = [currentUser.id, friend.id].sort().join("-");
         const friendStatus = onlineUsers[friend.id] ? "🟢 Онлайн" : "⚫ Оффлайн";
 
         res.send(`
@@ -512,12 +542,24 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     let content = "<div class='message-bubble'><b>" + escapeHtml(data.fromName) + "</b>";
                     if (data.text) content += "<p>" + escapeHtml(data.text) + "</p>";
                     if (data.photos && data.photos.length > 0) { content += "<div class='message-gallery'>"; data.photos.forEach(photo => { content += "<img src='" + photo + "' class='chat-photo'>"; }); content += "</div>"; }
-                    content += "<small>" + data.date + "</small></div>";
+                    const readStatus = String(data.fromId) === String(currentUserId)
+                        ? " <span class='read-status' id='read-status-" + data.id + "'>" + (data.readAt ? "✓✓" : "✓") + "</span>"
+                        : "";
+                    content += "<small>" + data.time + readStatus + "</small></div>";
+                    if (data.id) row.dataset.messageId = data.id;
                     row.innerHTML = content;
                     row.querySelectorAll(".chat-photo").forEach(img => { img.addEventListener("click", () => openPhoto(img.src)); img.onload = scrollChatBottom; });
                     messages.appendChild(row); scrollChatBottom();
                 }
                 socket.on("private message", (data) => { if (String(data.fromId) !== String(currentUserId)) addMessage(data); });
+                socket.on("messages read", (data) => {
+                    if (String(data.readerId) === String(currentUserId)) return;
+                    if (!Array.isArray(data.messageIds)) return;
+                    data.messageIds.forEach(id => {
+                        const el = document.getElementById("read-status-" + id);
+                        if (el) el.innerText = "✓✓";
+                    });
+                });
                 socket.on("online update", (onlineUsers) => { const status = onlineUsers[friendId] ? "🟢 Онлайн" : "⚫ Оффлайн"; const a = document.getElementById("status-" + friendId); const b = document.getElementById("side-status-" + friendId); if (a) a.innerText = status; if (b) b.innerText = status; });
 
                 const chatForm = document.getElementById("chatForm");
@@ -553,18 +595,22 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
         const text = req.body.message || "";
 
         const insertResult = await pool.query(
-            `INSERT INTO messages (from_id, to_id, text, photos) VALUES ($1, $2, $3, $4::jsonb) RETURNING created_at`,
+            `INSERT INTO messages (from_id, to_id, text, photos)
+             VALUES ($1, $2, $3, $4::jsonb)
+             RETURNING id, created_at, read_at`,
             [currentUser.id, friend.id, text, JSON.stringify(photos)]
         );
 
         const dialogId = [currentUser.id, friend.id].sort().join("-");
         const messageForClient = {
+            id: insertResult.rows[0].id,
             dialogId,
             fromId: currentUser.id,
             fromName: currentUser.username,
             text,
             photos,
-            date: formatDate(insertResult.rows[0].created_at)
+            time: formatTime(insertResult.rows[0].created_at),
+            readAt: insertResult.rows[0].read_at
         };
 
         io.to(dialogId).emit("private message", messageForClient);
