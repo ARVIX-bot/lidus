@@ -50,6 +50,11 @@ async function initDb() {
         ADD COLUMN IF NOT EXISTS read_at TIMESTAMP;
     `);
 
+    await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
+    `);
+
     console.log("PostgreSQL подключён, таблицы готовы");
 }
 
@@ -88,7 +93,7 @@ function requireAuth(req, res, next) {
 
 async function getCurrentUser(req) {
     const result = await pool.query(
-        `SELECT id, username, login, email, avatar, created_at FROM users WHERE id = $1`,
+        `SELECT id, username, login, email, avatar, created_at, last_seen FROM users WHERE id = $1`,
         [req.session.userId]
     );
     return result.rows[0];
@@ -105,6 +110,39 @@ function formatTime(value) {
         hour: "2-digit",
         minute: "2-digit"
     });
+}
+
+function formatLastSeen(value) {
+    if (!value) return "был недавно";
+
+    const last = new Date(value);
+    const now = new Date();
+
+    const sameDay =
+        last.getFullYear() === now.getFullYear() &&
+        last.getMonth() === now.getMonth() &&
+        last.getDate() === now.getDate();
+
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+
+    const isYesterday =
+        last.getFullYear() === yesterday.getFullYear() &&
+        last.getMonth() === yesterday.getMonth() &&
+        last.getDate() === yesterday.getDate();
+
+    const time = last.toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+
+    if (sameDay) return "был в сети в " + time;
+    if (isYesterday) return "был в сети вчера в " + time;
+
+    return "был в сети " + last.toLocaleDateString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit"
+    }) + " в " + time;
 }
 
 function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
@@ -182,6 +220,7 @@ app.post("/register", async (req, res) => {
 
         const newUser = result.rows[0];
         req.session.userId = newUser.id;
+        await pool.query(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [newUser.id]);
         onlineUsers[newUser.id] = true;
         io.emit("online update", onlineUsers);
         res.redirect("/feed");
@@ -201,6 +240,7 @@ app.post("/login", async (req, res) => {
         if (!user || user.password !== password) return res.redirect("/login.html?error=wrong");
 
         req.session.userId = user.id;
+        await pool.query(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [user.id]);
         onlineUsers[user.id] = true;
         io.emit("online update", onlineUsers);
         res.redirect("/feed");
@@ -210,8 +250,19 @@ app.post("/login", async (req, res) => {
     }
 });
 
-app.get("/logout", (req, res) => {
-    if (req.session.userId) delete onlineUsers[req.session.userId];
+app.get("/logout", async (req, res) => {
+    const userId = req.session.userId;
+
+    if (userId) {
+        delete onlineUsers[userId];
+
+        try {
+            await pool.query(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [userId]);
+        } catch (error) {
+            console.error("Ошибка обновления last_seen:", error);
+        }
+    }
+
     io.emit("online update", onlineUsers);
     req.session.destroy(() => res.redirect("/login.html"));
 });
@@ -222,7 +273,7 @@ app.get("/feed", requireAuth, async (req, res) => {
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
         const friendsResult = await pool.query(
-            `SELECT u.id, u.username, u.login, u.avatar
+            `SELECT u.id, u.username, u.login, u.avatar, u.last_seen
              FROM users u
              JOIN friends f ON f.friend_id = u.id
              WHERE f.user_id = $1
@@ -371,7 +422,7 @@ app.get("/friends", requireAuth, async (req, res) => {
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
         const friendsResult = await pool.query(
-            `SELECT u.id, u.username, u.login, u.avatar
+            `SELECT u.id, u.username, u.login, u.avatar, u.last_seen
              FROM users u
              JOIN friends f ON f.friend_id = u.id
              WHERE f.user_id = $1
@@ -454,6 +505,7 @@ app.get("/messages", requireAuth, async (req, res) => {
                 u.username,
                 u.login,
                 u.avatar,
+                u.last_seen,
                 lm.message_id,
                 lm.from_id,
                 lm.to_id,
@@ -469,7 +521,7 @@ app.get("/messages", requireAuth, async (req, res) => {
         );
 
         const friendsResult = await pool.query(
-            `SELECT u.id, u.username, u.login, u.avatar
+            `SELECT u.id, u.username, u.login, u.avatar, u.last_seen
              FROM users u
              JOIN friends f ON f.friend_id = u.id
              WHERE f.user_id = $1
@@ -494,7 +546,6 @@ app.get("/messages", requireAuth, async (req, res) => {
             const lastText = d.text && d.text.trim()
                 ? d.text
                 : (photos.length ? "📷 Фото" : "Начните диалог");
-            const status = onlineUsers[d.id] ? "Онлайн" : "Оффлайн";
             const onlineDot = onlineUsers[d.id] ? `<span class="dialog-online-dot"></span>` : "";
 
             return `
@@ -506,7 +557,7 @@ app.get("/messages", requireAuth, async (req, res) => {
 
                     <div class="dialog-row-main">
                         <div class="dialog-row-name">${d.username}</div>
-                        <div class="dialog-row-preview"><span class="dialog-status-text">${status}</span><span class="dialog-dot-separator">•</span>${lastText}</div>
+                        <div class="dialog-row-preview">${lastText}</div>
                     </div>
 
                     <div class="dialog-row-meta">
@@ -560,7 +611,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
         const currentUser = await getCurrentUser(req);
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
-        const friendResult = await pool.query(`SELECT id, username, login, avatar FROM users WHERE id = $1`, [req.params.id]);
+        const friendResult = await pool.query(`SELECT id, username, login, avatar, last_seen FROM users WHERE id = $1`, [req.params.id]);
         const friend = friendResult.rows[0];
         if (!friend) return res.status(404).send("Пользователь не найден");
 
@@ -598,7 +649,8 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             return `<div class="message-row ${isMe ? "my-message" : "friend-message"}" data-message-id="${msg.id}"><div class="message-bubble"><b>${msg.sender_name}</b>${msg.text ? `<p>${msg.text}</p>` : ""}${photoHtml}<small>${time} ${readIcon}</small></div></div>`;
         }).join("");
 
-        const friendStatus = onlineUsers[friend.id] ? "🟢 Онлайн" : "⚫ Оффлайн";
+        const friendOnline = !!onlineUsers[friend.id];
+        const friendStatus = friendOnline ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#26d85d;vertical-align:middle;"></span>` : formatLastSeen(friend.last_seen);
 
         res.send(`
         <html>
@@ -653,7 +705,15 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                         if (el) el.innerText = "✓✓";
                     });
                 });
-                socket.on("online update", (onlineUsers) => { const status = onlineUsers[friendId] ? "🟢 Онлайн" : "⚫ Оффлайн"; const a = document.getElementById("status-" + friendId); const b = document.getElementById("side-status-" + friendId); if (a) a.innerText = status; if (b) b.innerText = status; });
+                socket.on("online update", (onlineUsers) => {
+                    const status = onlineUsers[friendId]
+                        ? '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#26d85d;vertical-align:middle;"></span>'
+                        : "был недавно";
+                    const a = document.getElementById("status-" + friendId);
+                    const b = document.getElementById("side-status-" + friendId);
+                    if (a) a.innerHTML = status;
+                    if (b) b.innerHTML = status;
+                });
 
                 const chatForm = document.getElementById("chatForm");
                 const messageInput = document.getElementById("messageInput");
@@ -746,6 +806,13 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
 io.on("connection", (socket) => {
     console.log("Socket.IO подключён");
 
+    const connectedUserId = Number(socket.request.session?.userId);
+    if (connectedUserId) {
+        socket.userId = connectedUserId;
+        onlineUsers[connectedUserId] = true;
+        io.emit("online update", onlineUsers);
+    }
+
     socket.on("join dialog", async (data) => {
         const dialogId = typeof data === "string" ? data : data?.dialogId;
         const friendId = Number(data?.friendId);
@@ -777,6 +844,27 @@ io.on("connection", (socket) => {
             } catch (error) {
                 console.error("Ошибка отметки прочтения:", error);
             }
+        }
+    });
+
+    socket.on("disconnect", async () => {
+        const userId = Number(socket.userId || socket.request.session?.userId);
+        if (!userId) return;
+
+        const stillOnline = Array.from(await io.fetchSockets()).some(s =>
+            Number(s.userId || s.request.session?.userId) === Number(userId)
+        );
+
+        if (!stillOnline) {
+            delete onlineUsers[userId];
+
+            try {
+                await pool.query(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [userId]);
+            } catch (error) {
+                console.error("Ошибка обновления last_seen:", error);
+            }
+
+            io.emit("online update", onlineUsers);
         }
     });
 });
