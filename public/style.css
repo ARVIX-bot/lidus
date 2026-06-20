@@ -2061,3 +2061,93 @@ gap:12px;
     left: 20px;
     right: 20px;
 }
+
+/* MOBILE LOGIN FIX */
+
+@media (max-width: 768px) {
+    body {
+        overflow-x: hidden;
+    }
+
+    .auth-page,
+    .login-page,
+    .register-page {
+        width: 100%;
+        min-height: 100vh;
+        padding: 24px 16px;
+        box-sizing: border-box;
+    }
+
+    .hero-title,
+    .auth-hero h1 {
+        font-size: 38px !important;
+        line-height: 1.1;
+        text-align: center;
+    }
+
+    .hero-subtitle,
+    .auth-hero p {
+        font-size: 17px !important;
+        line-height: 1.5;
+        text-align: center;
+    }
+
+    .feature-grid,
+    .auth-features {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        width: 100%;
+    }
+
+    .feature-card {
+        width: 100%;
+        min-height: 90px;
+        padding: 18px;
+        box-sizing: border-box;
+    }
+
+    .auth-card,
+    .login-card,
+    .register-card {
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 28px 22px !important;
+        border-radius: 28px;
+        box-sizing: border-box;
+    }
+
+    .auth-logo img,
+    .login-logo img {
+        width: 86px;
+        height: 86px;
+    }
+
+    .auth-card h1,
+    .login-card h1 {
+        font-size: 34px !important;
+        line-height: 1.1;
+    }
+
+    .auth-card input,
+    .login-card input,
+    .register-card input {
+        width: 100%;
+        height: 58px;
+        font-size: 17px;
+        box-sizing: border-box;
+    }
+
+    .input-group {
+        width: 100%;
+    }
+
+    .auth-button,
+    .login-button,
+    button[type="submit"] {
+        width: 100%;
+        height: 58px;
+        font-size: 18px;
+        border-radius: 18px;
+    }
+}
