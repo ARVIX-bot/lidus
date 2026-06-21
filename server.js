@@ -1485,6 +1485,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <meta name="theme-color" content="#6b4dff">
             <title>Lidus — Диалог с ${friend.username}</title>
             <link rel="stylesheet" href="/style.css?v=6002">
+            <link rel="stylesheet" href="/chat.css?v=1">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
             <style>.message-room-link{display:inline-block;margin-top:5px;padding:7px 10px;border-radius:12px;background:rgba(255,255,255,.14);color:#fff;text-decoration:none;font-weight:900}.message-room-link:hover{background:rgba(255,255,255,.22)}</style>
         </head>
