@@ -15,10 +15,11 @@ const pool = hasDatabase
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:lewis_carolo63303@gmx.com";
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
     webpush.setVapidDetails(
-        "mailto:admin@lidus.local",
+        VAPID_SUBJECT,
         VAPID_PUBLIC_KEY,
         VAPID_PRIVATE_KEY
     );
