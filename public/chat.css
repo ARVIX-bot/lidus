@@ -454,3 +454,33 @@ body:has(.chat-page) .feed {
         width: auto !important;
     }
 }
+
+@media (max-width: 768px) {
+    body:has(.chat-page) .chat-page {
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+    }
+
+    body:has(.chat-page) .chat-header {
+        flex: 0 0 auto !important;
+    }
+
+    body:has(.chat-page) .chat-messages {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        padding-bottom: 12px !important;
+    }
+
+    body:has(.chat-page) .chat-form {
+        flex: 0 0 auto !important;
+        position: relative !important;
+        bottom: auto !important;
+        min-height: 58px !important;
+        padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+        z-index: 9999 !important;
+    }
+}
