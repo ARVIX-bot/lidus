@@ -240,6 +240,20 @@ function checkSvg(isRead) {
         : `<svg class="msg-checks" viewBox="0 0 10 12" aria-hidden="true"><path d="M1 6L4 9L9 1"/></svg>`;
 }
 
+function escapeHtmlServer(text) {
+    return String(text || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function linkifyMessageText(text) {
+    const safe = escapeHtmlServer(text);
+    return safe.replace(/(\/room\/\d+)/g, `<a class="message-room-link" href="$1">$1</a>`);
+}
+
 
 function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
     const avatar = currentUser?.avatar || "/images/logo.png";
@@ -1015,33 +1029,75 @@ app.post("/room/:id/invite", requireAuth, async (req, res) => {
     if (!login) return res.redirect("/room/" + req.params.id);
 
     try {
-        const roomResult = await pool.query(`SELECT id, owner_id FROM voice_rooms WHERE id = $1`, [req.params.id]);
+        const currentUser = await getCurrentUser(req);
+        if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
+
+        const roomResult = await pool.query(
+            `SELECT id, name, owner_id FROM voice_rooms WHERE id = $1`,
+            [req.params.id]
+        );
         const room = roomResult.rows[0];
 
         if (!room) return res.status(404).send("Комната не найдена");
-        if (Number(room.owner_id) !== Number(req.session.userId)) {
+        if (Number(room.owner_id) !== Number(currentUser.id)) {
             return res.status(403).send("Приглашать может только владелец комнаты");
         }
 
-        const userResult = await pool.query(`SELECT id FROM users WHERE login = $1`, [login]);
+        const userResult = await pool.query(
+            `SELECT id, username, login FROM users WHERE login = $1`,
+            [login]
+        );
         const invitedUser = userResult.rows[0];
 
         if (!invitedUser) return res.status(404).send("Пользователь не найден");
+        if (Number(invitedUser.id) === Number(currentUser.id)) {
+            return res.redirect("/room/" + room.id);
+        }
 
         await pool.query(
             `INSERT INTO room_invites (room_id, user_id, invited_by)
              VALUES ($1, $2, $3)
              ON CONFLICT DO NOTHING`,
-            [room.id, invitedUser.id, req.session.userId]
+            [room.id, invitedUser.id, currentUser.id]
         );
+
+        const inviteText = `🎮 ${currentUser.username} пригласил тебя в комнату «${room.name}». Нажми и перейди: /room/${room.id}`;
+        const insertResult = await pool.query(
+            `INSERT INTO messages (from_id, to_id, text, photos)
+             VALUES ($1, $2, $3, $4::jsonb)
+             RETURNING id, created_at, read_at`,
+            [currentUser.id, invitedUser.id, inviteText, JSON.stringify([])]
+        );
+
+        const dialogId = [currentUser.id, invitedUser.id].sort().join("-");
+        const messageForClient = {
+            id: insertResult.rows[0].id,
+            dialogId,
+            fromId: currentUser.id,
+            fromName: currentUser.username,
+            text: inviteText,
+            photos: [],
+            time: formatTime(insertResult.rows[0].created_at),
+            readAt: insertResult.rows[0].read_at
+        };
+
+        io.to(dialogId).emit("private message", messageForClient);
 
         await createNotification(
             invitedUser.id,
             "room_invite",
             "Приглашение в комнату",
-            "Вас пригласили в игровую комнату",
+            `${currentUser.username} пригласил вас в «${room.name}»`,
             "/room/" + room.id
         );
+
+        await sendPushNotification(invitedUser.id, {
+            title: "Приглашение в комнату",
+            body: `${currentUser.username} пригласил вас в «${room.name}»`,
+            url: "/room/" + room.id,
+            icon: currentUser.avatar || "/assets/icon-192.png",
+            badge: "/assets/icon-192.png"
+        });
 
         res.redirect("/room/" + room.id);
     } catch (error) {
@@ -1414,7 +1470,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             const photoHtml = photos.length ? `<div class="message-gallery">${photos.map(photo => `<img src="${photo}" class="chat-photo" onclick="openPhoto(this.src)">`).join("")}</div>` : "";
             const time = formatTime(msg.created_at);
             const readIcon = isMe ? `<span class="read-status ${msg.read_at ? "is-read" : ""}" id="read-status-${msg.id}">${checkSvg(!!msg.read_at)}</span>` : "";
-            return `<div class="message-row ${isMe ? "my-message" : "friend-message"}" data-message-id="${msg.id}"><div class="message-bubble"><b>${msg.sender_name}</b>${msg.text ? `<p>${msg.text}</p>` : ""}${photoHtml}<small>${time} ${readIcon}</small></div></div>`;
+            return `<div class="message-row ${isMe ? "my-message" : "friend-message"}" data-message-id="${msg.id}"><div class="message-bubble"><b>${msg.sender_name}</b>${msg.text ? `<p>${linkifyMessageText(msg.text)}</p>` : ""}${photoHtml}<small>${time} ${readIcon}</small></div></div>`;
         }).join("");
 
         const friendOnline = !!onlineUsers[friend.id];
@@ -1429,6 +1485,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <title>Lidus — Диалог с ${friend.username}</title>
             <link rel="stylesheet" href="/style.css?v=6002">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+            <style>.message-room-link{display:inline-block;margin-top:5px;padding:7px 10px;border-radius:12px;background:rgba(255,255,255,.14);color:#fff;text-decoration:none;font-weight:900}.message-room-link:hover{background:rgba(255,255,255,.22)}</style>
         </head>
         <body>
             <div class="app-layout">
@@ -1478,7 +1535,8 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     const row = document.createElement("div");
                     row.className = String(data.fromId) === String(currentUserId) ? "message-row my-message" : "message-row friend-message";
                     let content = "<div class='message-bubble'><b>" + escapeHtml(data.fromName) + "</b>";
-                    if (data.text) content += "<p>" + escapeHtml(data.text) + "</p>";
+                    function linkifyRoomLinks(text) { return escapeHtml(text).replace(/(\/room\/\d+)/g, "<a class='message-room-link' href='$1'>$1</a>"); }
+                    if (data.text) content += "<p>" + linkifyRoomLinks(data.text) + "</p>";
                     if (data.photos && data.photos.length > 0) { content += "<div class='message-gallery'>"; data.photos.forEach(photo => { content += "<img src='" + photo + "' class='chat-photo'>"; }); content += "</div>"; }
                     const readStatus = String(data.fromId) === String(currentUserId)
                         ? " <span class='read-status " + (data.readAt ? "is-read" : "") + "' id='read-status-" + data.id + "'>" + getCheckSvg(!!data.readAt) + "</span>"
