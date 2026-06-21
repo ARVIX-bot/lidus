@@ -1,4 +1,5 @@
 const multer = require("multer");
+require("dotenv").config();
 const http = require("http");
 const express = require("express");
 const bodyParser = require("body-parser");
