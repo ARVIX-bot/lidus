@@ -830,10 +830,21 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             <a class="room-back-link" href="/feed"><i class="fa-solid fa-arrow-left"></i> Назад</a>
                             <h1>🎤 ${room.name}</h1>
                             <p>${room.description || "Голосовая игровая комната Lidus"}</p>
+                            <div class="room-privacy-badges">
+                                <span><i class="fa-solid ${room.is_private ? "fa-lock" : "fa-lock-open"}"></i> ${room.is_private ? "Приватная" : "Публичная"}</span>
+                                <span><i class="fa-solid ${room.is_hidden ? "fa-eye-slash" : "fa-eye"}"></i> ${room.is_hidden ? "Скрытая" : "Видна в списке"}</span>
+                            </div>
                         </div>
-                        <div class="room-count">
-                            <b>${members.length}</b>
-                            <span>участников</span>
+                        <div class="room-header-actions">
+                            ${Number(room.owner_id) === Number(currentUser.id) ? `
+                            <button type="button" class="room-settings-gear" onclick="openRoomSettings()" title="Настройки комнаты">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                            ` : ""}
+                            <div class="room-count">
+                                <b>${members.length}</b>
+                                <span>участников</span>
+                            </div>
                         </div>
                     </div>
 
@@ -851,25 +862,100 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                     </div>
 
                     ${Number(room.owner_id) === Number(currentUser.id) ? `
-                    <div class="room-members-card">
-                        <h2>Настройки приватности</h2>
-                        <form class="room-settings-form" method="POST" action="/room/${room.id}/settings">
-                            <label class="room-checkbox">
-                                <input type="checkbox" name="is_private" ${room.is_private ? "checked" : ""}>
-                                <span>Приватная — вход только по приглашению</span>
-                            </label>
-                            <label class="room-checkbox">
-                                <input type="checkbox" name="is_hidden" ${room.is_hidden ? "checked" : ""}>
-                                <span>Скрытая — видна только участникам и приглашённым</span>
-                            </label>
-                            <button type="submit"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
-                        </form>
-                        <form class="room-invite-form" method="POST" action="/room/${room.id}/invite">
-                            <input name="login" placeholder="Логин друга для приглашения" required>
-                            <button type="submit"><i class="fa-solid fa-user-plus"></i> Пригласить</button>
-                        </form>
+                    <div id="roomSettingsModal" class="room-settings-modal" onclick="closeRoomSettings(event)">
+                        <div class="room-settings-window">
+                            <div class="room-settings-head">
+                                <div>
+                                    <h2><i class="fa-solid fa-gear"></i> Настройки комнаты</h2>
+                                    <p>Приватность и приглашения для комнаты «${room.name}»</p>
+                                </div>
+                                <button type="button" class="room-settings-close" onclick="closeRoomSettings()">
+                                    <i class="fa-solid fa-xmark"></i>
+                                </button>
+                            </div>
+
+                            <form class="room-settings-form" method="POST" action="/room/${room.id}/settings">
+                                <label class="room-toggle-row">
+                                    <input type="checkbox" name="is_private" ${room.is_private ? "checked" : ""}>
+                                    <span class="room-toggle-ui"></span>
+                                    <div>
+                                        <b>Приватная комната</b>
+                                        <small>Войти смогут только участники и приглашённые.</small>
+                                    </div>
+                                </label>
+
+                                <label class="room-toggle-row">
+                                    <input type="checkbox" name="is_hidden" ${room.is_hidden ? "checked" : ""}>
+                                    <span class="room-toggle-ui"></span>
+                                    <div>
+                                        <b>Скрыть из списка</b>
+                                        <small>Комнату увидят только участники и приглашённые.</small>
+                                    </div>
+                                </label>
+
+                                <button type="submit" class="room-save-btn"><i class="fa-solid fa-floppy-disk"></i> Сохранить настройки</button>
+                            </form>
+
+                            <div class="room-settings-divider"></div>
+
+                            <form class="room-invite-form" method="POST" action="/room/${room.id}/invite">
+                                <label>Пригласить друга</label>
+                                <div class="room-invite-line">
+                                    <input name="login" placeholder="Логин друга" required>
+                                    <button type="submit"><i class="fa-solid fa-user-plus"></i> Пригласить</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
+
+                    <script>
+                        function openRoomSettings() {
+                            const modal = document.getElementById("roomSettingsModal");
+                            if (modal) modal.classList.add("show");
+                        }
+
+                        function closeRoomSettings(event) {
+                            if (event && event.target && event.target.id !== "roomSettingsModal") return;
+                            const modal = document.getElementById("roomSettingsModal");
+                            if (modal) modal.classList.remove("show");
+                        }
+
+                        document.addEventListener("keydown", function(event) {
+                            if (event.key === "Escape") closeRoomSettings();
+                        });
+                    </script>
                     ` : ""}
+
+
+
+                    <style>
+                        .room-header-actions{display:flex;align-items:center;gap:14px;}
+                        .room-settings-gear{width:52px;height:52px;border-radius:18px;padding:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);display:grid;place-items:center;font-size:20px;box-shadow:none;}
+                        .room-settings-gear:hover{background:rgba(139,92,255,.22);transform:none;}
+                        .room-privacy-badges{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;}
+                        .room-privacy-badges span{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border-radius:999px;background:rgba(255,255,255,.07);color:#cfcfff;font-size:13px;font-weight:800;}
+                        .room-settings-modal{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(10px);z-index:999999;display:none;align-items:center;justify-content:center;padding:18px;}
+                        .room-settings-modal.show{display:flex;}
+                        .room-settings-window{width:min(560px,100%);border-radius:26px;background:#151724;border:1px solid rgba(255,255,255,.1);box-shadow:0 28px 90px rgba(0,0,0,.55);padding:22px;}
+                        .room-settings-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px;}
+                        .room-settings-head h2{margin:0 0 6px;font-size:26px;}
+                        .room-settings-head p{margin:0;color:#9c9caf;}
+                        .room-settings-close{width:40px;height:40px;border-radius:14px;padding:0;background:rgba(255,255,255,.08);box-shadow:none;}
+                        .room-toggle-row{display:grid;grid-template-columns:48px 1fr;gap:14px;align-items:center;padding:14px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);margin-bottom:12px;cursor:pointer;}
+                        .room-toggle-row input{display:none;}
+                        .room-toggle-ui{width:44px;height:26px;border-radius:999px;background:#2a2d3b;position:relative;transition:.2s;}
+                        .room-toggle-ui:before{content:"";position:absolute;width:20px;height:20px;border-radius:50%;left:3px;top:3px;background:white;transition:.2s;}
+                        .room-toggle-row input:checked + .room-toggle-ui{background:linear-gradient(135deg,#6b4dff,#9a6cff);}
+                        .room-toggle-row input:checked + .room-toggle-ui:before{transform:translateX(18px);}
+                        .room-toggle-row b{display:block;margin-bottom:3px;}
+                        .room-toggle-row small{color:#9c9caf;}
+                        .room-save-btn{width:100%;margin-top:4px;}
+                        .room-settings-divider{height:1px;background:rgba(255,255,255,.08);margin:20px 0;}
+                        .room-invite-form label{display:block;margin-bottom:9px;font-weight:900;}
+                        .room-invite-line{display:flex;gap:10px;}
+                        .room-invite-line input{flex:1;min-width:0;}
+                        @media(max-width:768px){.room-header-actions{gap:8px}.room-settings-gear{width:44px;height:44px;border-radius:15px}.room-count{min-width:86px}.room-privacy-badges{gap:6px}.room-privacy-badges span{font-size:11px;padding:6px 8px}.room-settings-window{padding:18px;border-radius:22px}.room-settings-head h2{font-size:21px}.room-invite-line{flex-direction:column}.room-invite-line button{width:100%;}.room-toggle-row{grid-template-columns:44px 1fr;padding:12px}.room-toggle-row small{font-size:12px}}
+                    </style>
 
                     <div class="room-members-card">
                         <h2>Участники</h2>
