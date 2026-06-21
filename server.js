@@ -1044,6 +1044,28 @@ io.on("connection", (socket) => {
     });
 });
 
+
+app.get("/debug-push", requireAuth, async (req, res) => {
+    const result = await pool.query(
+        `SELECT id, user_id, endpoint, created_at
+         FROM push_subscriptions
+         WHERE user_id = $1
+         ORDER BY id DESC`,
+        [req.session.userId]
+    );
+
+    res.json({
+        userId: req.session.userId,
+        count: result.rows.length,
+        subscriptions: result.rows.map(s => ({
+            id: s.id,
+            user_id: s.user_id,
+            endpoint_start: s.endpoint.slice(0, 40),
+            created_at: s.created_at
+        }))
+    });
+});
+
 const PORT = process.env.PORT || 3000;
 
 initDb().then(() => {
