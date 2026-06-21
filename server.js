@@ -770,14 +770,14 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
         const accessResult = await pool.query(
             `SELECT
-                ($2 = $3) AS is_owner,
                 EXISTS(SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2) AS is_member,
                 EXISTS(SELECT 1 FROM room_invites WHERE room_id = $1 AND user_id = $2) AS is_invited`,
-            [room.id, currentUser.id, room.owner_id]
+            [room.id, currentUser.id]
         );
 
-        const access = accessResult.rows[0];
-        const canAccessPrivateRoom = access.is_owner || access.is_member || access.is_invited;
+        const access = accessResult.rows[0] || {};
+        const isOwner = Number(room.owner_id) === Number(currentUser.id);
+        const canAccessPrivateRoom = isOwner || access.is_member || access.is_invited;
 
         if (room.is_private && !canAccessPrivateRoom) {
             return res.status(403).send("Это приватная комната. Войти можно только по приглашению.");
