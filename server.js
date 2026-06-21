@@ -142,7 +142,8 @@ function formatTime(value) {
     if (!value) return "";
     return new Date(value).toLocaleTimeString("ru-RU", {
         hour: "2-digit",
-        minute: "2-digit"
+        minute: "2-digit",
+        timeZone: "Europe/Moscow"
     });
 }
 
@@ -268,9 +269,17 @@ async function sendPushNotification(userId, payload) {
         const data = JSON.stringify(payload);
 
         for (const row of result.rows) {
-            try {
-                await webpush.sendNotification(row.subscription, data);
-            } catch (error) {
+    try {
+        await webpush.sendNotification(row.subscription, data);
+
+        console.log(
+            "Push отправлен успешно:",
+            row.id,
+            "пользователь:",
+            userId
+        );
+
+    } catch (error) {
                 if (
     error.statusCode === 404 ||
     error.statusCode === 410 ||
