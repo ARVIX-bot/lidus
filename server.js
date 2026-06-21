@@ -271,11 +271,16 @@ async function sendPushNotification(userId, payload) {
             try {
                 await webpush.sendNotification(row.subscription, data);
             } catch (error) {
-                if (error.statusCode === 404 || error.statusCode === 410) {
-                    await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.id]);
-                } else {
-                    console.error("Ошибка push уведомления:", error);
-                }
+                if (
+    error.statusCode === 404 ||
+    error.statusCode === 410 ||
+    error.statusCode === 403
+) {
+    await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.id]);
+    console.log("Старая push-подписка удалена:", row.id);
+} else {
+    console.error("Ошибка push уведомления:", error);
+}
             }
         }
     } catch (error) {
