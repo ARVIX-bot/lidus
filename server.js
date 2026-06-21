@@ -87,6 +87,21 @@ async function initDb() {
             subscription JSONB NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
         );
+
+        CREATE TABLE IF NOT EXISTS voice_rooms (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS room_members (
+            room_id INTEGER REFERENCES voice_rooms(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            joined_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (room_id, user_id)
+        );
     `);
 
     console.log("PostgreSQL подключён, таблицы готовы");
@@ -213,7 +228,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
     const username = currentUser?.username || "Lidus";
 
     const menu = [
-        ["/feed", "fa-house", "Лента", "feed"],
+        ["/feed", "fa-gamepad", "Игровая", "feed"],
         ["/profile", "fa-user", "Профиль", "profile"],
         ["/friends", "fa-user-group", "Друзья", "friends"],
         ["/users", "fa-magnifying-glass", "Найти людей", "users"],
@@ -520,41 +535,279 @@ app.get("/feed", requireAuth, async (req, res) => {
         const currentUser = await getCurrentUser(req);
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
-        const friendsResult = await pool.query(
-            `SELECT u.id, u.username, u.login, u.avatar, u.last_seen
-             FROM users u
-             JOIN friends f ON f.friend_id = u.id
-             WHERE f.user_id = $1
-             ORDER BY u.username`,
+        await pool.query(`
+            INSERT INTO voice_rooms (name, description, owner_id)
+            SELECT 'Общение', 'Свободная голосовая комната для друзей', $1
+            WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Общение');
+
+            INSERT INTO voice_rooms (name, description, owner_id)
+            SELECT 'Minecraft', 'Комната для игры и совместного выживания', $1
+            WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Minecraft');
+
+            INSERT INTO voice_rooms (name, description, owner_id)
+            SELECT 'Counter-Strike', 'Комната для каток и тимспика', $1
+            WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Counter-Strike');
+        `, [currentUser.id]);
+
+        const roomsResult = await pool.query(
+            `SELECT
+                r.id,
+                r.name,
+                r.description,
+                r.created_at,
+                u.username AS owner_name,
+                COUNT(rm.user_id)::int AS members_count,
+                EXISTS(
+                    SELECT 1
+                    FROM room_members my_rm
+                    WHERE my_rm.room_id = r.id
+                    AND my_rm.user_id = $1
+                ) AS is_joined
+             FROM voice_rooms r
+             LEFT JOIN users u ON u.id = r.owner_id
+             LEFT JOIN room_members rm ON rm.room_id = r.id
+             GROUP BY r.id, u.username
+             ORDER BY r.id ASC`,
             [currentUser.id]
         );
 
-        const friends = friendsResult.rows;
-        const avatar = currentUser.avatar || "/images/logo.png";
+        const totalMembers = roomsResult.rows.reduce((sum, room) => sum + Number(room.members_count || 0), 0);
 
-        const onlineList = friends.map(friend => `
-            <div class="mini-user">
-                <img src="${friend.avatar || "/images/logo.png"}" class="mini-avatar">
-                <div><b>${friend.username}</b><p>${onlineUsers[friend.id] ? "🟢 Онлайн" : "⚫ Оффлайн"}</p></div>
+        const roomCards = roomsResult.rows.map(room => `
+            <div class="game-room-card ${room.is_joined ? "is-joined" : ""}">
+                <div class="game-room-icon">
+                    <i class="fa-solid ${room.name.toLowerCase().includes("minecraft") ? "fa-cube" : room.name.toLowerCase().includes("counter") ? "fa-crosshairs" : "fa-headset"}"></i>
+                </div>
+
+                <div class="game-room-main">
+                    <div class="game-room-title">
+                        <h3>${room.name}</h3>
+                        ${room.is_joined ? `<span class="room-live-badge">Вы внутри</span>` : ""}
+                    </div>
+                    <p>${room.description || "Голосовая комната Lidus"}</p>
+                    <div class="game-room-meta">
+                        <span><i class="fa-solid fa-users"></i> ${room.members_count} участников</span>
+                        <span><i class="fa-solid fa-crown"></i> ${room.owner_name || "Lidus"}</span>
+                    </div>
+                </div>
+
+                <a class="game-room-enter" href="/room/${room.id}">
+                    <i class="fa-solid fa-right-to-bracket"></i>
+                    Войти
+                </a>
             </div>
         `).join("");
 
         res.send(pageHtml({
-            title: "Лента",
+            title: "Игровая комната",
             active: "feed",
             currentUser,
             body: `
-                <div class="mobile-app-header"><div class="mobile-app-title">Lidus</div><div class="mobile-app-actions"><a href="/users"><i class="fa-solid fa-magnifying-glass"></i></a><button type="button" class="primary"><i class="fa-solid fa-plus"></i></button></div></div>
-                <div class="feed-title"><h1>Добро пожаловать, ${currentUser.username} 👋</h1><p>Лента новостей, друзья и активность Lidus</p></div>
-                <div class="post-create pro-card"><img src="${avatar}" class="mini-avatar"><div class="post-input-area"><input placeholder="Что у вас нового?"><div class="post-tools"><button type="button"><i class="fa-regular fa-image"></i> Фото</button><button type="button"><i class="fa-regular fa-face-smile"></i> Настроение</button></div></div><button class="publish-btn">Опубликовать</button></div>
-                <div class="post-card"><div class="post-header"><img src="${avatar}" class="mini-avatar"><div><b>${currentUser.username}</b><p>Сегодня</p></div></div><p>Продолжаю разработку Lidus Orbit 🚀</p><div class="post-actions"><span>❤️ 12</span><span>💬 4</span><span>↗️ 1</span></div></div>
-                <div class="post-card"><div class="post-header"><img src="/images/logo.png" class="mini-avatar"><div><b>Lidus</b><p>Сегодня</p></div></div><p>PostgreSQL подключён. Старые JSON-файлы больше не нужны 🔥</p></div>
+                <div class="mobile-app-header">
+                    <div class="mobile-app-title">Игровая</div>
+                    <div class="mobile-app-actions">
+                        <button type="button" class="primary" onclick="document.getElementById('createRoomForm').classList.toggle('show')">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <section class="game-page">
+                    <div class="game-hero">
+                        <div>
+                            <span class="game-kicker">Lidus Orbit</span>
+                            <h1>🎮 Игровая комната</h1>
+                            <p>Место для голосовых комнат, демонстрации экрана и будущих стримов для друзей.</p>
+                        </div>
+                        <div class="game-hero-stat">
+                            <b>${totalMembers}</b>
+                            <span>в комнатах</span>
+                        </div>
+                    </div>
+
+                    <form id="createRoomForm" class="create-room-form" method="POST" action="/rooms/create">
+                        <div>
+                            <label>Название комнаты</label>
+                            <input name="name" placeholder="Например: Dota 2, Minecraft, Общение" maxlength="40" required>
+                        </div>
+                        <div>
+                            <label>Описание</label>
+                            <input name="description" placeholder="Для чего эта комната?" maxlength="100">
+                        </div>
+                        <button type="submit"><i class="fa-solid fa-plus"></i> Создать</button>
+                    </form>
+
+                    <div class="game-section-head">
+                        <h2>Голосовые комнаты</h2>
+                        <p>Сейчас это лобби комнат. Следующим шагом подключим WebRTC-голос.</p>
+                    </div>
+
+                    <div class="game-room-list">
+                        ${roomCards || "<div class='messages-empty'>Комнат пока нет</div>"}
+                    </div>
+                </section>
             `,
-            rightPanel: `<div class="side-card"><h3>Онлайн друзья</h3>${onlineList || "<p>Нет друзей онлайн.</p>"}</div><div class="side-card"><h3>Уведомления</h3><p>🔔 Добро пожаловать в Lidus</p><p>👥 Друзья и чаты работают через PostgreSQL</p></div>`
+            rightPanel: `
+                <div class="side-card">
+                    <h3>Игровая</h3>
+                    <p>🎤 Голосовые комнаты</p>
+                    <p>🖥 Скоро демонстрация экрана</p>
+                    <p>📺 Потом стримы</p>
+                </div>
+                <div class="side-card">
+                    <h3>Онлайн</h3>
+                    <p>🟢 Сейчас в комнатах: ${totalMembers}</p>
+                </div>
+            `
         }));
     } catch (error) {
         console.error(error);
-        res.status(500).send("Ошибка загрузки ленты");
+        res.status(500).send("Ошибка игровой комнаты");
+    }
+});
+
+app.post("/rooms/create", requireAuth, async (req, res) => {
+    const name = (req.body.name || "").trim();
+    const description = (req.body.description || "").trim();
+
+    if (!name) return res.redirect("/feed");
+
+    try {
+        const result = await pool.query(
+            `INSERT INTO voice_rooms (name, description, owner_id)
+             VALUES ($1, $2, $3)
+             RETURNING id`,
+            [name.slice(0, 40), description.slice(0, 100), req.session.userId]
+        );
+
+        res.redirect("/room/" + result.rows[0].id);
+    } catch (error) {
+        console.error("Ошибка создания комнаты:", error);
+        res.status(500).send("Ошибка создания комнаты");
+    }
+});
+
+app.get("/room/:id", requireAuth, async (req, res) => {
+    try {
+        const currentUser = await getCurrentUser(req);
+        if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
+
+        const roomResult = await pool.query(
+            `SELECT r.id, r.name, r.description, r.created_at, u.username AS owner_name
+             FROM voice_rooms r
+             LEFT JOIN users u ON u.id = r.owner_id
+             WHERE r.id = $1`,
+            [req.params.id]
+        );
+
+        const room = roomResult.rows[0];
+        if (!room) return res.status(404).send("Комната не найдена");
+
+        await pool.query(
+            `INSERT INTO room_members (room_id, user_id)
+             VALUES ($1, $2)
+             ON CONFLICT DO NOTHING`,
+            [room.id, currentUser.id]
+        );
+
+        const membersResult = await pool.query(
+            `SELECT u.id, u.username, u.login, u.avatar, u.last_seen
+             FROM room_members rm
+             JOIN users u ON u.id = rm.user_id
+             WHERE rm.room_id = $1
+             ORDER BY rm.joined_at ASC`,
+            [room.id]
+        );
+
+        const members = membersResult.rows;
+
+        const membersHtml = members.map(member => `
+            <div class="room-member" id="room-member-${member.id}">
+                <img src="${member.avatar || "/images/logo.png"}">
+                <div>
+                    <b>${member.username}</b>
+                    <span>${onlineUsers[member.id] ? "В сети" : formatLastSeen(member.last_seen)}</span>
+                </div>
+                <div class="room-member-dot ${onlineUsers[member.id] ? "is-online" : ""}"></div>
+            </div>
+        `).join("");
+
+        res.send(pageHtml({
+            title: room.name,
+            active: "feed",
+            currentUser,
+            body: `
+                <div class="mobile-app-header">
+                    <div class="mobile-app-title">${room.name}</div>
+                    <div class="mobile-app-actions">
+                        <a href="/feed"><i class="fa-solid fa-arrow-left"></i></a>
+                    </div>
+                </div>
+
+                <section class="room-page">
+                    <div class="room-header-card">
+                        <div>
+                            <a class="room-back-link" href="/feed"><i class="fa-solid fa-arrow-left"></i> Назад</a>
+                            <h1>🎤 ${room.name}</h1>
+                            <p>${room.description || "Голосовая игровая комната Lidus"}</p>
+                        </div>
+                        <div class="room-count">
+                            <b>${members.length}</b>
+                            <span>участников</span>
+                        </div>
+                    </div>
+
+                    <div class="voice-stage">
+                        <div class="voice-stage-icon"><i class="fa-solid fa-headset"></i></div>
+                        <h2>Голосовой чат скоро</h2>
+                        <p>Комнаты уже работают. Следующим шагом подключим WebRTC: микрофон, мут, демонстрацию экрана и стрим.</p>
+
+                        <div class="voice-controls">
+                            <button type="button" class="voice-btn disabled"><i class="fa-solid fa-microphone"></i> Микрофон</button>
+                            <button type="button" class="voice-btn disabled"><i class="fa-solid fa-volume-xmark"></i> Мут</button>
+                            <button type="button" class="voice-btn disabled"><i class="fa-solid fa-display"></i> Экран</button>
+                            <a class="voice-btn danger" href="/room/${room.id}/leave"><i class="fa-solid fa-door-open"></i> Выйти</a>
+                        </div>
+                    </div>
+
+                    <div class="room-members-card">
+                        <h2>Участники</h2>
+                        <div class="room-members-list">
+                            ${membersHtml || "<p class='messages-empty'>В комнате пока никого нет</p>"}
+                        </div>
+                    </div>
+                </section>
+            `,
+            rightPanel: `
+                <div class="side-card">
+                    <h3>${room.name}</h3>
+                    <p>👑 Создал: ${room.owner_name || "Lidus"}</p>
+                    <p>👥 Участников: ${members.length}</p>
+                </div>
+                <div class="side-card">
+                    <h3>Следующий этап</h3>
+                    <p>🎤 WebRTC голос</p>
+                    <p>🖥 Демонстрация экрана</p>
+                </div>
+            `
+        }));
+    } catch (error) {
+        console.error("Ошибка комнаты:", error);
+        res.status(500).send("Ошибка комнаты");
+    }
+});
+
+app.get("/room/:id/leave", requireAuth, async (req, res) => {
+    try {
+        await pool.query(
+            `DELETE FROM room_members WHERE room_id = $1 AND user_id = $2`,
+            [req.params.id, req.session.userId]
+        );
+
+        res.redirect("/feed");
+    } catch (error) {
+        console.error("Ошибка выхода из комнаты:", error);
+        res.redirect("/feed");
     }
 });
 
