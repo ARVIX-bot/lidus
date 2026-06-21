@@ -3613,3 +3613,24 @@ gap:12px;
         gap: 6px !important;
     }
 }
+
+body:has(.chat-page) .feed {
+    padding: 0 !important;
+}
+
+body:has(.chat-page) .chat-page {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+}
+
+body:has(.chat-page) .chat-messages {
+    flex: 1 !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+}
+
+body:has(.chat-page) .chat-form {
+    flex-shrink: 0 !important;
+}
