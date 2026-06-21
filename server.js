@@ -535,19 +535,26 @@ app.get("/feed", requireAuth, async (req, res) => {
         const currentUser = await getCurrentUser(req);
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
-        await pool.query(`
-            INSERT INTO voice_rooms (name, description, owner_id)
-            SELECT 'Общение', 'Свободная голосовая комната для друзей', $1
-            WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Общение');
+        await pool.query(
+    `INSERT INTO voice_rooms (name, description, owner_id)
+     SELECT 'Общение', 'Свободная голосовая комната для друзей', $1
+     WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Общение')`,
+    [currentUser.id]
+);
 
-            INSERT INTO voice_rooms (name, description, owner_id)
-            SELECT 'Minecraft', 'Комната для игры и совместного выживания', $1
-            WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Minecraft');
+await pool.query(
+    `INSERT INTO voice_rooms (name, description, owner_id)
+     SELECT 'Minecraft', 'Комната для игры и совместного выживания', $1
+     WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Minecraft')`,
+    [currentUser.id]
+);
 
-            INSERT INTO voice_rooms (name, description, owner_id)
-            SELECT 'Counter-Strike', 'Комната для каток и тимспика', $1
-            WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Counter-Strike');
-        `, [currentUser.id]);
+await pool.query(
+    `INSERT INTO voice_rooms (name, description, owner_id)
+     SELECT 'Counter-Strike', 'Комната для каток и тимспика', $1
+     WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Counter-Strike')`,
+    [currentUser.id]
+);
 
         const roomsResult = await pool.query(
             `SELECT
