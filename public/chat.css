@@ -484,3 +484,22 @@ body:has(.chat-page) .feed {
         z-index: 9999 !important;
     }
 }
+
+/* FIX PWA MOBILE CHAT BOTTOM GAP */
+@media (max-width: 768px) {
+    body:has(.chat-page) .chat-form {
+        padding: 8px 12px !important;
+        padding-bottom: 8px !important;
+        margin-bottom: 0 !important;
+        bottom: 0 !important;
+    }
+
+    body:has(.chat-page) .chat-page {
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+    }
+
+    body:has(.chat-page) .chat-messages {
+        padding-bottom: 8px !important;
+    }
+}
