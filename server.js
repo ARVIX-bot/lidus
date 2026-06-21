@@ -1489,10 +1489,10 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
             <style>.message-room-link{display:inline-block;margin-top:5px;padding:7px 10px;border-radius:12px;background:rgba(255,255,255,.14);color:#fff;text-decoration:none;font-weight:900}.message-room-link:hover{background:rgba(255,255,255,.22)}</style>
         </head>
-        <body class="dialog-body">
+        <body>
             <div class="app-layout">
                 <aside class="left-menu"><div class="brand-logo"><div class="logo-app-icon">L</div><div class="logo-word">Lidus</div></div><a href="/feed"><i class="fa-solid fa-house"></i> Лента</a><a href="/profile"><i class="fa-solid fa-user"></i> Профиль</a><a href="/friends"><i class="fa-solid fa-user-group"></i> Друзья</a><a href="/users"><i class="fa-solid fa-magnifying-glass"></i> Найти людей</a><a href="/messages" class="active"><i class="fa-solid fa-comments"></i> Сообщения</a><a href="/logout"><i class="fa-solid fa-right-from-bracket"></i> Выйти</a></aside>
-                <main class="feed"><div class="chat-page"><div class="chat-header"><a href="/messages" class="back-link"><i class="fa-solid fa-arrow-left"></i></a><img src="${friend.avatar || "/images/logo.png"}" class="chat-avatar"><div><h2>${friend.username}</h2><p id="status-${friend.id}">${friendStatus}</p><p id="typingStatus" class="typing-status" style="display:none;">печатает...</p></div></div><div id="messages" class="chat-messages">${list || "<p class='empty-chat'>Сообщений пока нет.</p>"}</div><form class="chat-form" id="chatForm" enctype="multipart/form-data" onsubmit="sendChatMessageStable(event); return false;"><label class="photo-btn" title="Отправить фото"><i class="fa-solid fa-image"></i><input type="file" id="photoInput" name="photos" accept="image/*" multiple hidden></label><div id="photoPreview" class="photo-preview-grid"></div><input id="messageInput" name="message" placeholder="Введите сообщение..." autocomplete="off"><button type="button" id="sendMessageBtn" onclick="sendChatMessageStable(event)"><i class="fa-solid fa-paper-plane"></i></button></form></div></main>
+                <main class="feed"><div class="chat-page"><div class="chat-header"><a href="/messages" class="back-link"><i class="fa-solid fa-arrow-left"></i></a><img src="${friend.avatar || "/images/logo.png"}" class="chat-avatar"><div><h2>${friend.username}</h2><p id="status-${friend.id}">${friendStatus}</p><p id="typingStatus" class="typing-status" style="display:none;">печатает...</p></div></div><div id="messages" class="chat-messages">${list || "<p class='empty-chat'>Сообщений пока нет.</p>"}</div><form class="chat-form" id="chatForm" enctype="multipart/form-data"><label class="photo-btn" title="Отправить фото"><i class="fa-solid fa-image"></i><input type="file" id="photoInput" name="photos" accept="image/*" multiple hidden></label><div id="photoPreview" class="photo-preview-grid"></div><textarea id="messageInput" name="message" placeholder="Введите сообщение..." rows="1"></textarea><button type="submit"><i class="fa-solid fa-paper-plane"></i></button></form></div></main>
                 <aside class="right-panel"><div class="side-card"><h3>Диалог</h3><p>👤 ${friend.username}</p><p id="side-status-${friend.id}">${friendStatus}</p></div><div class="side-card"><h3>Приватность</h3><p>🔒 Этот диалог видите только вы двое</p><p>💬 Сообщения сохраняются в PostgreSQL</p></div></aside>
             </div>
             <div id="photoModal" class="photo-modal" onclick="closePhoto()"><img id="modalPhoto"></div>
@@ -1524,7 +1524,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     } catch (e) {}
                 }
 
-                function scrollChatBottom() { const messages = document.getElementById("messages"); if (!messages) return; const go = () => { messages.scrollTop = messages.scrollHeight; document.documentElement.scrollTop = document.documentElement.scrollHeight; document.body.scrollTop = document.body.scrollHeight; }; go(); requestAnimationFrame(go); setTimeout(go, 50); setTimeout(go, 150); setTimeout(go, 500); }
+                function scrollChatBottom() { const messages = document.getElementById("messages"); requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; }); setTimeout(() => { messages.scrollTop = messages.scrollHeight; }, 100); }
                 function escapeHtml(text) { const div = document.createElement("div"); div.innerText = text || ""; return div.innerHTML; }
                 function getCheckSvg(isRead) {
                     return isRead
@@ -1537,7 +1537,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     const row = document.createElement("div");
                     row.className = String(data.fromId) === String(currentUserId) ? "message-row my-message" : "message-row friend-message";
                     let content = "<div class='message-bubble'><b>" + escapeHtml(data.fromName) + "</b>";
-                    function linkifyRoomLinks(text) { return escapeHtml(text).replace(/(\/room\/\d+)/g, "<a class='message-room-link' href='$1'>$1</a>"); }
+                    function linkifyRoomLinks(text) { return escapeHtml(text).replace(/(\\/room\\/\\d+)/g, "<a class='message-room-link' href='$1'>$1</a>"); }
                     if (data.text) content += "<p>" + linkifyRoomLinks(data.text) + "</p>";
                     if (data.photos && data.photos.length > 0) { content += "<div class='message-gallery'>"; data.photos.forEach(photo => { content += "<img src='" + photo + "' class='chat-photo'>"; }); content += "</div>"; }
                     const readStatus = String(data.fromId) === String(currentUserId)
@@ -1601,78 +1601,21 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 const messageInput = document.getElementById("messageInput");
                 const photoInput = document.getElementById("photoInput");
                 const photoPreview = document.getElementById("photoPreview");
-                const sendMessageBtn = document.getElementById("sendMessageBtn");
-                let isSendingMessage = false;
-
-                async function sendChatMessageStable(event) {
-                    if (event) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                    }
-
-                    if (isSendingMessage) return false;
-
-                    const text = (messageInput.value || "").trim();
-                    const photos = photoInput.files || [];
-                    if (!text && photos.length === 0) return false;
-
-                    isSendingMessage = true;
-                    if (sendMessageBtn) sendMessageBtn.disabled = true;
-
-                    const formData = new FormData();
-                    formData.append("message", text);
-                    for (let i = 0; i < photos.length; i++) formData.append("photos", photos[i]);
-
-                    const oldText = messageInput.value;
-                    messageInput.value = "";
-                    photoInput.value = "";
-                    photoPreview.innerHTML = "";
-                    photoPreview.style.display = "none";
-                    isTyping = false;
-                    socket.emit("typing", { dialogId, friendId, isTyping: false });
-
-                    try {
-                        const response = await fetch("/send-message/" + friendId, {
-                            method: "POST",
-                            body: formData,
-                            credentials: "same-origin"
-                        });
-
-                        const result = await response.json();
-
-                        if (result.success && result.message) {
-                            addMessage(result.message);
-                            scrollChatBottom();
-                        } else {
-                            messageInput.value = oldText;
-                            alert(result.error || "Ошибка отправки сообщения");
-                        }
-                    } catch (error) {
-                        messageInput.value = oldText;
-                        console.error("Ошибка отправки сообщения:", error);
-                        alert("Ошибка отправки сообщения");
-                    } finally {
-                        isSendingMessage = false;
-                        if (sendMessageBtn) sendMessageBtn.disabled = false;
-                        messageInput.focus();
-                        scrollChatBottom();
-                    }
-
-                    return false;
-                }
-
-                window.sendChatMessageStable = sendChatMessageStable;
-
-                chatForm.addEventListener("submit", sendChatMessageStable);
-
                 messageInput.addEventListener("keydown", function(e) {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
-                        sendChatMessageStable(e);
+                        e.stopPropagation();
+                        if (chatForm.requestSubmit) {
+                            chatForm.requestSubmit();
+                        } else {
+                            chatForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+                        }
                     }
                 });
-
                 messageInput.addEventListener("input", function() {
+                    this.style.height = "auto";
+                    this.style.height = this.scrollHeight + "px";
+
                     if (!isTyping) {
                         isTyping = true;
                         socket.emit("typing", { dialogId, friendId, isTyping: true });
@@ -1684,33 +1627,42 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                         socket.emit("typing", { dialogId, friendId, isTyping: false });
                     }, 1400);
                 });
+                photoInput.addEventListener("change", () => { photoPreview.innerHTML = ""; const photos = Array.from(photoInput.files); if (photos.length === 0) { photoPreview.style.display = "none"; return; } photoPreview.style.display = "grid"; photos.forEach(photo => { const reader = new FileReader(); reader.onload = function(e) { const item = document.createElement("div"); item.className = "preview-item"; item.innerHTML = "<img src='" + e.target.result + "'><span>×</span>"; item.querySelector("span").addEventListener("click", () => { photoInput.value = ""; photoPreview.innerHTML = ""; photoPreview.style.display = "none"; }); photoPreview.appendChild(item); }; reader.readAsDataURL(photo); }); });
+                chatForm.addEventListener("submit", async function(e) {
+                    e.preventDefault();
+                    const text = messageInput.value.trim();
+                    const photos = photoInput.files || [];
+                    if (!text && photos.length === 0) return;
 
-                photoInput.addEventListener("change", () => {
+                    const formData = new FormData();
+                    formData.append("message", text);
+                    for (let i = 0; i < photos.length; i++) formData.append("photos", photos[i]);
+
+                    const oldText = messageInput.value;
+                    messageInput.value = "";
+                    messageInput.style.height = "auto";
+                    photoInput.value = "";
                     photoPreview.innerHTML = "";
-                    const photos = Array.from(photoInput.files || []);
-                    if (photos.length === 0) {
-                        photoPreview.style.display = "none";
-                        return;
+                    photoPreview.style.display = "none";
+                    isTyping = false;
+                    socket.emit("typing", { dialogId, friendId, isTyping: false });
+
+                    try {
+                        const response = await fetch("/send-message/" + friendId, { method: "POST", body: formData });
+                        const result = await response.json();
+                        if (result.success && result.message) {
+                            addMessage(result.message);
+                            scrollChatBottom();
+                        } else {
+                            messageInput.value = oldText;
+                            alert(result.error || "Ошибка отправки сообщения");
+                        }
+                    } catch (error) {
+                        messageInput.value = oldText;
+                        console.error("Ошибка отправки сообщения:", error);
+                        alert("Ошибка отправки сообщения");
                     }
-
-                    photoPreview.style.display = "grid";
-                    photos.forEach(photo => {
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            const item = document.createElement("div");
-                            item.className = "preview-item";
-                            item.innerHTML = "<img src='" + e.target.result + "'><span>×</span>";
-                            item.querySelector("span").addEventListener("click", () => {
-                                photoInput.value = "";
-                                photoPreview.innerHTML = "";
-                                photoPreview.style.display = "none";
-                            });
-                            photoPreview.appendChild(item);
-                        };
-                        reader.readAsDataURL(photo);
-                    });
                 });
-
                 function openPhoto(src) { document.getElementById("modalPhoto").src = src; document.getElementById("photoModal").style.display = "flex"; }
                 function closePhoto() { document.getElementById("photoModal").style.display = "none"; }
                 window.addEventListener("load", () => {
