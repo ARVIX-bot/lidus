@@ -164,37 +164,49 @@ function formatTime(value) {
 }
 
 function formatLastSeen(value) {
-    if (!value) return "был недавно";
+    if (!value) return "Был недавно";
 
     const last = new Date(value);
     const now = new Date();
+    const diff = Math.floor((now - last) / 1000);
 
-    const sameDay =
-        last.getFullYear() === now.getFullYear() &&
-        last.getMonth() === now.getMonth() &&
-        last.getDate() === now.getDate();
+    if (diff < 60) return "Был в сети только что";
 
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
+    if (diff < 3600) {
+        const minutes = Math.floor(diff / 60);
+        if (minutes === 1) return "Был в сети 1 минуту назад";
+        if (minutes >= 2 && minutes <= 4) return `Был в сети ${minutes} минуты назад`;
+        return `Был в сети ${minutes} минут назад`;
+    }
 
-    const isYesterday =
-        last.getFullYear() === yesterday.getFullYear() &&
-        last.getMonth() === yesterday.getMonth() &&
-        last.getDate() === yesterday.getDate();
+    if (diff < 86400) {
+        const hours = Math.floor(diff / 3600);
+        if (hours === 1) return "Был в сети 1 час назад";
+        if (hours >= 2 && hours <= 4) return `Был в сети ${hours} часа назад`;
+        return `Был в сети ${hours} часов назад`;
+    }
 
     const time = last.toLocaleTimeString("ru-RU", {
         hour: "2-digit",
-        minute: "2-digit"
+        minute: "2-digit",
+        timeZone: "Europe/Moscow"
     });
 
-    if (sameDay) return "был в сети в " + time;
-    if (isYesterday) return "был в сети вчера в " + time;
-
-    return "был в сети " + last.toLocaleDateString("ru-RU", {
+    const date = last.toLocaleDateString("ru-RU", {
         day: "2-digit",
-        month: "2-digit"
-    }) + " в " + time;
+        month: "2-digit",
+        timeZone: "Europe/Moscow"
+    });
+
+    return `Был в сети ${date} в ${time}`;
 }
+
+function checkSvg(isRead) {
+    return isRead
+        ? `<svg class="msg-checks" viewBox="0 0 18 12" aria-hidden="true"><path d="M1 6L4 9L9 1"/><path d="M8 6L11 9L17 1"/></svg>`
+        : `<svg class="msg-checks" viewBox="0 0 10 12" aria-hidden="true"><path d="M1 6L4 9L9 1"/></svg>`;
+}
+
 
 function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
     const avatar = currentUser?.avatar || "/images/logo.png";
@@ -232,7 +244,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="/style.css?v=6001">
+        <link rel="stylesheet" href="/style.css?v=6002">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     </head>
     <body>
@@ -786,7 +798,7 @@ app.get("/messages", requireAuth, async (req, res) => {
             const isUnread = unreadCount > 0;
             const isMyLastMessage = Number(d.from_id) === Number(currentUser.id);
             const readIcon = isMyLastMessage
-                ? `<span class="dialog-read-status ${d.read_at ? "is-read" : ""}">${d.read_at ? "✓✓" : "✓"}</span>`
+                ? `<span class="dialog-read-status ${d.read_at ? "is-read" : ""}">${checkSvg(!!d.read_at)}</span>`
                 : "";
             const lastText = d.text && d.text.trim()
                 ? d.text
@@ -895,12 +907,12 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             const photos = Array.isArray(msg.photos) ? msg.photos : [];
             const photoHtml = photos.length ? `<div class="message-gallery">${photos.map(photo => `<img src="${photo}" class="chat-photo" onclick="openPhoto(this.src)">`).join("")}</div>` : "";
             const time = formatTime(msg.created_at);
-            const readIcon = isMe ? `<span class="read-status" id="read-status-${msg.id}">${msg.read_at ? "✓✓" : "✓"}</span>` : "";
+            const readIcon = isMe ? `<span class="read-status ${msg.read_at ? "is-read" : ""}" id="read-status-${msg.id}">${checkSvg(!!msg.read_at)}</span>` : "";
             return `<div class="message-row ${isMe ? "my-message" : "friend-message"}" data-message-id="${msg.id}"><div class="message-bubble"><b>${msg.sender_name}</b>${msg.text ? `<p>${msg.text}</p>` : ""}${photoHtml}<small>${time} ${readIcon}</small></div></div>`;
         }).join("");
 
         const friendOnline = !!onlineUsers[friend.id];
-        const friendStatus = friendOnline ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#26d85d;vertical-align:middle;"></span>` : formatLastSeen(friend.last_seen);
+        const friendStatus = friendOnline ? "В сети" : formatLastSeen(friend.last_seen);
 
         res.send(`
         <html>
@@ -909,7 +921,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <link rel="manifest" href="/manifest.json">
             <meta name="theme-color" content="#6b4dff">
             <title>Lidus — Диалог с ${friend.username}</title>
-            <link rel="stylesheet" href="/style.css?v=6001">
+            <link rel="stylesheet" href="/style.css?v=6002">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
         </head>
         <body>
@@ -949,6 +961,11 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
 
                 function scrollChatBottom() { const messages = document.getElementById("messages"); requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; }); setTimeout(() => { messages.scrollTop = messages.scrollHeight; }, 100); }
                 function escapeHtml(text) { const div = document.createElement("div"); div.innerText = text || ""; return div.innerHTML; }
+                function getCheckSvg(isRead) {
+                    return isRead
+                        ? '<svg class="msg-checks" viewBox="0 0 18 12" aria-hidden="true"><path d="M1 6L4 9L9 1"/><path d="M8 6L11 9L17 1"/></svg>'
+                        : '<svg class="msg-checks" viewBox="0 0 10 12" aria-hidden="true"><path d="M1 6L4 9L9 1"/></svg>';
+                }
                 function addMessage(data) {
                     const messages = document.getElementById("messages");
                     const empty = document.querySelector(".empty-chat"); if (empty) empty.remove();
@@ -958,7 +975,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     if (data.text) content += "<p>" + escapeHtml(data.text) + "</p>";
                     if (data.photos && data.photos.length > 0) { content += "<div class='message-gallery'>"; data.photos.forEach(photo => { content += "<img src='" + photo + "' class='chat-photo'>"; }); content += "</div>"; }
                     const readStatus = String(data.fromId) === String(currentUserId)
-                        ? " <span class='read-status' id='read-status-" + data.id + "'>" + (data.readAt ? "✓✓" : "✓") + "</span>"
+                        ? " <span class='read-status " + (data.readAt ? "is-read" : "") + "' id='read-status-" + data.id + "'>" + getCheckSvg(!!data.readAt) + "</span>"
                         : "";
                     content += "<small>" + data.time + readStatus + "</small></div>";
                     if (data.id) row.dataset.messageId = data.id;
@@ -992,17 +1009,26 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     if (!Array.isArray(data.messageIds)) return;
                     data.messageIds.forEach(id => {
                         const el = document.getElementById("read-status-" + id);
-                        if (el) el.innerText = "✓✓";
+                        if (el) { el.classList.add("is-read"); el.innerHTML = getCheckSvg(true); }
                     });
                 });
                 socket.on("online update", (onlineUsers) => {
                     const status = onlineUsers[friendId]
-                        ? '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#26d85d;vertical-align:middle;"></span>'
-                        : "был недавно";
+                        ? "В сети"
+                        : "Был в сети только что";
                     const a = document.getElementById("status-" + friendId);
                     const b = document.getElementById("side-status-" + friendId);
                     if (a) a.innerHTML = status;
                     if (b) b.innerHTML = status;
+                });
+
+                socket.on("user status update", (data) => {
+                    if (!data || String(data.userId) !== String(friendId)) return;
+                    const a = document.getElementById("status-" + friendId);
+                    const b = document.getElementById("side-status-" + friendId);
+                    const text = data.status || "Был в сети только что";
+                    if (a) a.innerHTML = text;
+                    if (b) b.innerHTML = text;
                 });
 
                 const chatForm = document.getElementById("chatForm");
@@ -1198,6 +1224,10 @@ io.on("connection", (socket) => {
             }
 
             io.emit("online update", onlineUsers);
+            io.emit("user status update", {
+                userId,
+                status: "Был в сети только что"
+            });
         }
     });
 });

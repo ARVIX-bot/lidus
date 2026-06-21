@@ -2954,3 +2954,78 @@ gap:12px;
         border-radius: 16px !important;
     }
 }
+
+
+/* ===== LIDUS MAX-LIKE MESSAGE META + SVG CHECKS ===== */
+.message-bubble {
+    position: relative;
+    padding-right: 58px !important;
+    padding-bottom: 22px !important;
+}
+
+.message-bubble small {
+    position: absolute !important;
+    right: 10px !important;
+    bottom: 6px !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 3px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+    color: rgba(255,255,255,.72) !important;
+    white-space: nowrap !important;
+}
+
+.read-status,
+.dialog-read-status {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-left: 2px !important;
+    line-height: 1 !important;
+}
+
+.msg-checks {
+    width: 14px !important;
+    height: 10px !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+    overflow: visible !important;
+}
+
+.msg-checks path {
+    fill: none !important;
+    stroke: rgba(255,255,255,.92) !important;
+    stroke-width: 1.65 !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+}
+
+.dialog-read-status .msg-checks {
+    width: 13px !important;
+    height: 9px !important;
+}
+
+body:has(.chat-page) .chat-header p {
+    color: #a3a4b5 !important;
+}
+
+@media (max-width: 768px) {
+    body:has(.chat-page) .message-bubble {
+        padding-right: 52px !important;
+        padding-bottom: 20px !important;
+    }
+
+    body:has(.chat-page) .message-bubble small {
+        right: 9px !important;
+        bottom: 5px !important;
+        font-size: 9.5px !important;
+    }
+
+    body:has(.chat-page) .msg-checks {
+        width: 12px !important;
+        height: 8px !important;
+    }
+}
