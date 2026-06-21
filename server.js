@@ -102,6 +102,24 @@ async function initDb() {
             joined_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (room_id, user_id)
         );
+
+        CREATE TABLE IF NOT EXISTS room_invites (
+            room_id INTEGER REFERENCES voice_rooms(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (room_id, user_id)
+        );
+    `);
+
+    await pool.query(`
+        ALTER TABLE voice_rooms
+        ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE;
+    `);
+
+    await pool.query(`
+        ALTER TABLE voice_rooms
+        ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE;
     `);
 
     console.log("PostgreSQL подключён, таблицы готовы");
@@ -536,22 +554,22 @@ app.get("/feed", requireAuth, async (req, res) => {
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
         await pool.query(
-    `INSERT INTO voice_rooms (name, description, owner_id)
-     SELECT 'Общение', 'Свободная голосовая комната для друзей', $1
+    `INSERT INTO voice_rooms (name, description, owner_id, is_private, is_hidden)
+     SELECT 'Общение', 'Свободная голосовая комната для друзей', $1, FALSE, FALSE
      WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Общение')`,
     [currentUser.id]
 );
 
 await pool.query(
-    `INSERT INTO voice_rooms (name, description, owner_id)
-     SELECT 'Minecraft', 'Комната для игры и совместного выживания', $1
+    `INSERT INTO voice_rooms (name, description, owner_id, is_private, is_hidden)
+     SELECT 'Minecraft', 'Комната для игры и совместного выживания', $1, FALSE, FALSE
      WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Minecraft')`,
     [currentUser.id]
 );
 
 await pool.query(
-    `INSERT INTO voice_rooms (name, description, owner_id)
-     SELECT 'Counter-Strike', 'Комната для каток и тимспика', $1
+    `INSERT INTO voice_rooms (name, description, owner_id, is_private, is_hidden)
+     SELECT 'Counter-Strike', 'Комната для каток и тимспика', $1, FALSE, FALSE
      WHERE NOT EXISTS (SELECT 1 FROM voice_rooms WHERE name = 'Counter-Strike')`,
     [currentUser.id]
 );
@@ -562,6 +580,9 @@ await pool.query(
                 r.name,
                 r.description,
                 r.created_at,
+                r.owner_id,
+                r.is_private,
+                r.is_hidden,
                 u.username AS owner_name,
                 COUNT(rm.user_id)::int AS members_count,
                 EXISTS(
@@ -569,10 +590,27 @@ await pool.query(
                     FROM room_members my_rm
                     WHERE my_rm.room_id = r.id
                     AND my_rm.user_id = $1
-                ) AS is_joined
+                ) AS is_joined,
+                EXISTS(
+                    SELECT 1
+                    FROM room_invites ri
+                    WHERE ri.room_id = r.id
+                    AND ri.user_id = $1
+                ) AS is_invited
              FROM voice_rooms r
              LEFT JOIN users u ON u.id = r.owner_id
              LEFT JOIN room_members rm ON rm.room_id = r.id
+             WHERE
+                r.is_hidden = FALSE
+                OR r.owner_id = $1
+                OR EXISTS (
+                    SELECT 1 FROM room_members my_rm
+                    WHERE my_rm.room_id = r.id AND my_rm.user_id = $1
+                )
+                OR EXISTS (
+                    SELECT 1 FROM room_invites ri
+                    WHERE ri.room_id = r.id AND ri.user_id = $1
+                )
              GROUP BY r.id, u.username
              ORDER BY r.id ASC`,
             [currentUser.id]
@@ -590,6 +628,8 @@ await pool.query(
                     <div class="game-room-title">
                         <h3>${room.name}</h3>
                         ${room.is_joined ? `<span class="room-live-badge">Вы внутри</span>` : ""}
+                        ${room.is_private ? `<span class="room-live-badge">Приватная</span>` : ""}
+                        ${room.is_hidden ? `<span class="room-live-badge">Скрытая</span>` : ""}
                     </div>
                     <p>${room.description || "Голосовая комната Lidus"}</p>
                     <div class="game-room-meta">
@@ -641,6 +681,17 @@ await pool.query(
                             <label>Описание</label>
                             <input name="description" placeholder="Для чего эта комната?" maxlength="100">
                         </div>
+
+                        <label class="room-checkbox">
+                            <input type="checkbox" name="is_private">
+                            <span>Приватная — вход только по приглашению</span>
+                        </label>
+
+                        <label class="room-checkbox">
+                            <input type="checkbox" name="is_hidden">
+                            <span>Скрытая — видна только участникам и приглашённым</span>
+                        </label>
+
                         <button type="submit"><i class="fa-solid fa-plus"></i> Создать</button>
                     </form>
 
@@ -676,15 +727,22 @@ await pool.query(
 app.post("/rooms/create", requireAuth, async (req, res) => {
     const name = (req.body.name || "").trim();
     const description = (req.body.description || "").trim();
+    const isPrivate = req.body.is_private === "on";
+    const isHidden = req.body.is_hidden === "on";
 
     if (!name) return res.redirect("/feed");
 
     try {
         const result = await pool.query(
-            `INSERT INTO voice_rooms (name, description, owner_id)
-             VALUES ($1, $2, $3)
+            `INSERT INTO voice_rooms (name, description, owner_id, is_private, is_hidden)
+             VALUES ($1, $2, $3, $4, $5)
              RETURNING id`,
-            [name.slice(0, 40), description.slice(0, 100), req.session.userId]
+            [name.slice(0, 40), description.slice(0, 100), req.session.userId, isPrivate, isHidden]
+        );
+
+        await pool.query(
+            `INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+            [result.rows[0].id, req.session.userId]
         );
 
         res.redirect("/room/" + result.rows[0].id);
@@ -700,7 +758,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
         if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
 
         const roomResult = await pool.query(
-            `SELECT r.id, r.name, r.description, r.created_at, u.username AS owner_name
+            `SELECT r.id, r.name, r.description, r.created_at, r.owner_id, r.is_private, r.is_hidden, u.username AS owner_name
              FROM voice_rooms r
              LEFT JOIN users u ON u.id = r.owner_id
              WHERE r.id = $1`,
@@ -709,6 +767,21 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
         const room = roomResult.rows[0];
         if (!room) return res.status(404).send("Комната не найдена");
+
+        const accessResult = await pool.query(
+            `SELECT
+                ($2 = $3) AS is_owner,
+                EXISTS(SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2) AS is_member,
+                EXISTS(SELECT 1 FROM room_invites WHERE room_id = $1 AND user_id = $2) AS is_invited`,
+            [room.id, currentUser.id, room.owner_id]
+        );
+
+        const access = accessResult.rows[0];
+        const canAccessPrivateRoom = access.is_owner || access.is_member || access.is_invited;
+
+        if (room.is_private && !canAccessPrivateRoom) {
+            return res.status(403).send("Это приватная комната. Войти можно только по приглашению.");
+        }
 
         await pool.query(
             `INSERT INTO room_members (room_id, user_id)
@@ -777,6 +850,27 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         </div>
                     </div>
 
+                    ${Number(room.owner_id) === Number(currentUser.id) ? `
+                    <div class="room-members-card">
+                        <h2>Настройки приватности</h2>
+                        <form class="room-settings-form" method="POST" action="/room/${room.id}/settings">
+                            <label class="room-checkbox">
+                                <input type="checkbox" name="is_private" ${room.is_private ? "checked" : ""}>
+                                <span>Приватная — вход только по приглашению</span>
+                            </label>
+                            <label class="room-checkbox">
+                                <input type="checkbox" name="is_hidden" ${room.is_hidden ? "checked" : ""}>
+                                <span>Скрытая — видна только участникам и приглашённым</span>
+                            </label>
+                            <button type="submit"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
+                        </form>
+                        <form class="room-invite-form" method="POST" action="/room/${room.id}/invite">
+                            <input name="login" placeholder="Логин друга для приглашения" required>
+                            <button type="submit"><i class="fa-solid fa-user-plus"></i> Пригласить</button>
+                        </form>
+                    </div>
+                    ` : ""}
+
                     <div class="room-members-card">
                         <h2>Участники</h2>
                         <div class="room-members-list">
@@ -789,7 +883,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                 <div class="side-card">
                     <h3>${room.name}</h3>
                     <p>👑 Создал: ${room.owner_name || "Lidus"}</p>
-                    <p>👥 Участников: ${members.length}</p>
+                    <p>👥 Участников: ${members.length}</p><p>🔒 ${room.is_private ? "Приватная" : "Публичная"}</p><p>👁 ${room.is_hidden ? "Скрытая" : "Видна в списке"}</p>
                 </div>
                 <div class="side-card">
                     <h3>Следующий этап</h3>
@@ -801,6 +895,72 @@ app.get("/room/:id", requireAuth, async (req, res) => {
     } catch (error) {
         console.error("Ошибка комнаты:", error);
         res.status(500).send("Ошибка комнаты");
+    }
+});
+
+app.post("/room/:id/settings", requireAuth, async (req, res) => {
+    try {
+        const roomResult = await pool.query(`SELECT id, owner_id FROM voice_rooms WHERE id = $1`, [req.params.id]);
+        const room = roomResult.rows[0];
+
+        if (!room) return res.status(404).send("Комната не найдена");
+        if (Number(room.owner_id) !== Number(req.session.userId)) {
+            return res.status(403).send("Настройки может менять только владелец комнаты");
+        }
+
+        const isPrivate = req.body.is_private === "on";
+        const isHidden = req.body.is_hidden === "on";
+
+        await pool.query(
+            `UPDATE voice_rooms SET is_private = $1, is_hidden = $2 WHERE id = $3`,
+            [isPrivate, isHidden, room.id]
+        );
+
+        res.redirect("/room/" + room.id);
+    } catch (error) {
+        console.error("Ошибка настроек комнаты:", error);
+        res.status(500).send("Ошибка настроек комнаты");
+    }
+});
+
+app.post("/room/:id/invite", requireAuth, async (req, res) => {
+    const login = (req.body.login || "").trim();
+
+    if (!login) return res.redirect("/room/" + req.params.id);
+
+    try {
+        const roomResult = await pool.query(`SELECT id, owner_id FROM voice_rooms WHERE id = $1`, [req.params.id]);
+        const room = roomResult.rows[0];
+
+        if (!room) return res.status(404).send("Комната не найдена");
+        if (Number(room.owner_id) !== Number(req.session.userId)) {
+            return res.status(403).send("Приглашать может только владелец комнаты");
+        }
+
+        const userResult = await pool.query(`SELECT id FROM users WHERE login = $1`, [login]);
+        const invitedUser = userResult.rows[0];
+
+        if (!invitedUser) return res.status(404).send("Пользователь не найден");
+
+        await pool.query(
+            `INSERT INTO room_invites (room_id, user_id, invited_by)
+             VALUES ($1, $2, $3)
+             ON CONFLICT DO NOTHING`,
+            [room.id, invitedUser.id, req.session.userId]
+        );
+
+        await createNotification(
+            invitedUser.id,
+            "room_invite",
+            "Приглашение в комнату",
+            "Вас пригласили в игровую комнату",
+            "/room/" + room.id
+        );
+
+        res.redirect("/room/" + room.id);
+    } catch (error) {
+        console.error("Ошибка приглашения в комнату:", error);
+        res.status(500).send("Ошибка приглашения в комнату");
     }
 });
 
