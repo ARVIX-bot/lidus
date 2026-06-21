@@ -128,7 +128,22 @@ function requireAuth(req, res, next) {
 
 async function getCurrentUser(req) {
     const result = await pool.query(
-        `SELECT id, username, login, email, avatar, created_at, last_seen FROM users WHERE id = $1`,
+        `SELECT
+            u.id,
+            u.username,
+            u.login,
+            u.email,
+            u.avatar,
+            u.created_at,
+            u.last_seen,
+            (
+                SELECT COUNT(*)::int
+                FROM messages m
+                WHERE m.to_id = u.id
+                AND m.read_at IS NULL
+            ) AS unread_total
+         FROM users u
+         WHERE u.id = $1`,
         [req.session.userId]
     );
     return result.rows[0];
@@ -192,11 +207,16 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
         ["/users", "fa-magnifying-glass", "Найти людей", "users"],
         ["/messages", "fa-comments", "Сообщения", "messages"],
         ["/logout", "fa-right-from-bracket", "Выйти", "logout"]
-    ].map(([href, icon, text, key]) => `
+    ].map(([href, icon, text, key]) => {
+        const unreadBadge = key === "messages" && Number(currentUser?.unread_total || 0) > 0
+            ? `<span class="nav-unread-badge">${Number(currentUser.unread_total) > 99 ? "99+" : currentUser.unread_total}</span>`
+            : "";
+
+        return `
         <a href="${href}" class="${active === key ? "active" : ""}">
-            <i class="fa-solid ${icon}"></i> ${text}
-        </a>
-    `).join("");
+            <span class="nav-link-inner"><i class="fa-solid ${icon}"></i> ${text}</span>${unreadBadge}
+        </a>`;
+    }).join("");
 
     return `
     <html>
@@ -212,7 +232,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="/style.css?v=5002">
+        <link rel="stylesheet" href="/style.css?v=6001">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     </head>
     <body>
@@ -225,7 +245,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
                 <div class="topbar">
                     <div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input placeholder="Поиск в Lidus"></div>
                     <div class="topbar-right">
-                        <div class="top-icon"><i class="fa-solid fa-bell"></i></div>
+                        <a class="top-icon top-icon-link" href="/notifications-page"><i class="fa-solid fa-bell"></i>${Number(currentUser?.unread_total || 0) > 0 ? `<span class="top-unread-badge">${Number(currentUser.unread_total) > 99 ? "99+" : currentUser.unread_total}</span>` : ""}</a>
                         <div class="top-icon"><i class="fa-solid fa-envelope"></i></div>
                         <div class="profile-mini"><img src="${avatar}" class="top-avatar"><span>${username}</span></div>
                     </div>
@@ -234,7 +254,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
             </main>
             <aside class="right-panel">${rightPanel}</aside>
         </div>
-        <script src="/push.js?v=1"></script>
+        <script src="/push.js?v=2"></script>
     </body>
     </html>`;
 }
@@ -367,6 +387,54 @@ app.post("/notifications/read", requireAuth, async (req, res) => {
     } catch (error) {
         console.error("Ошибка чтения уведомлений:", error);
         res.status(500).json({ success: false });
+    }
+});
+
+app.get("/notifications-page", requireAuth, async (req, res) => {
+    try {
+        const currentUser = await getCurrentUser(req);
+        if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
+
+        const result = await pool.query(
+            `SELECT id, type, title, body, link, is_read, created_at
+             FROM notifications
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT 50`,
+            [currentUser.id]
+        );
+
+        const list = result.rows.map(n => `
+            <a href="${n.link || "/messages"}" class="notification-item ${n.is_read ? "" : "is-unread"}">
+                <div class="notification-dot"></div>
+                <div class="notification-main">
+                    <b>${n.title}</b>
+                    <p>${n.body || "Новое уведомление"}</p>
+                    <small>${formatDate(n.created_at)}</small>
+                </div>
+            </a>
+        `).join("");
+
+        await pool.query(`UPDATE notifications SET is_read = TRUE WHERE user_id = $1`, [currentUser.id]);
+
+        res.send(pageHtml({
+            title: "Уведомления",
+            active: "messages",
+            currentUser,
+            body: `
+                <div class="mobile-app-header"><div class="mobile-app-title">Уведомления</div><div class="mobile-app-actions"><a href="/messages"><i class="fa-solid fa-comments"></i></a></div></div>
+                <section class="notifications-page">
+                    <div class="messages-head"><h1>Уведомления</h1></div>
+                    <div class="notifications-list">
+                        ${list || "<div class='messages-empty'>Уведомлений пока нет</div>"}
+                    </div>
+                </section>
+            `,
+            rightPanel: `<div class="side-card"><h3>Уведомления</h3><p>Здесь появляются новые сообщения и события.</p></div>`
+        }));
+    } catch (error) {
+        console.error(error);
+        res.status(500).send("Ошибка уведомлений");
     }
 });
 
@@ -680,7 +748,14 @@ app.get("/messages", requireAuth, async (req, res) => {
                 lm.text,
                 lm.photos,
                 lm.created_at,
-                lm.read_at
+                lm.read_at,
+                (
+                    SELECT COUNT(*)::int
+                    FROM messages um
+                    WHERE um.from_id = u.id
+                    AND um.to_id = $1
+                    AND um.read_at IS NULL
+                ) AS unread_count
             FROM users u
             JOIN last_messages lm ON lm.friend_id = u.id
             ORDER BY lm.created_at DESC
@@ -707,6 +782,8 @@ app.get("/messages", requireAuth, async (req, res) => {
 
         const list = dialogs.map(d => {
             const photos = Array.isArray(d.photos) ? d.photos : [];
+            const unreadCount = Number(d.unread_count || 0);
+            const isUnread = unreadCount > 0;
             const isMyLastMessage = Number(d.from_id) === Number(currentUser.id);
             const readIcon = isMyLastMessage
                 ? `<span class="dialog-read-status ${d.read_at ? "is-read" : ""}">${d.read_at ? "✓✓" : "✓"}</span>`
@@ -715,9 +792,12 @@ app.get("/messages", requireAuth, async (req, res) => {
                 ? d.text
                 : (photos.length ? "📷 Фото" : "Начните диалог");
             const onlineDot = onlineUsers[d.id] ? `<span class="dialog-online-dot"></span>` : "";
+            const unreadBadge = isUnread
+                ? `<div class="dialog-unread-badge">${unreadCount > 99 ? "99+" : unreadCount}</div>`
+                : "";
 
             return `
-                <a href="/dialog/${d.id}" class="dialog-row">
+                <a href="/dialog/${d.id}" class="dialog-row ${isUnread ? "has-unread" : ""}">
                     <div class="dialog-avatar-wrap">
                         <img src="${d.avatar || "/images/logo.png"}" class="dialog-row-avatar">
                         ${onlineDot}
@@ -730,7 +810,7 @@ app.get("/messages", requireAuth, async (req, res) => {
 
                     <div class="dialog-row-meta">
                         <div class="dialog-row-time">${d.created_at ? formatTime(d.created_at) : ""}</div>
-                        <div class="dialog-row-checks">${readIcon}</div>
+                        <div class="dialog-row-checks">${unreadBadge || readIcon}</div>
                     </div>
                 </a>
             `;
@@ -775,11 +855,6 @@ app.get("/messages", requireAuth, async (req, res) => {
 });
 
 
-
-app.get("/clear-push", requireAuth, async (req, res) => {
-    await pool.query("DELETE FROM push_subscriptions");
-    res.send("All push subscriptions cleared");
-});
 
 app.get("/dialog/:id", requireAuth, async (req, res) => {
     try {
@@ -834,13 +909,13 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             <link rel="manifest" href="/manifest.json">
             <meta name="theme-color" content="#6b4dff">
             <title>Lidus — Диалог с ${friend.username}</title>
-            <link rel="stylesheet" href="/style.css?v=5002">
+            <link rel="stylesheet" href="/style.css?v=6001">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
         </head>
         <body>
             <div class="app-layout">
                 <aside class="left-menu"><div class="brand-logo"><div class="logo-app-icon">L</div><div class="logo-word">Lidus</div></div><a href="/feed"><i class="fa-solid fa-house"></i> Лента</a><a href="/profile"><i class="fa-solid fa-user"></i> Профиль</a><a href="/friends"><i class="fa-solid fa-user-group"></i> Друзья</a><a href="/users"><i class="fa-solid fa-magnifying-glass"></i> Найти людей</a><a href="/messages" class="active"><i class="fa-solid fa-comments"></i> Сообщения</a><a href="/logout"><i class="fa-solid fa-right-from-bracket"></i> Выйти</a></aside>
-                <main class="feed"><div class="chat-page"><div class="chat-header"><a href="/messages" class="back-link"><i class="fa-solid fa-arrow-left"></i></a><img src="${friend.avatar || "/images/logo.png"}" class="chat-avatar"><div><h2>${friend.username}</h2><p id="status-${friend.id}">${friendStatus}</p></div></div><div id="messages" class="chat-messages">${list || "<p class='empty-chat'>Сообщений пока нет.</p>"}</div><form class="chat-form" id="chatForm" enctype="multipart/form-data"><label class="photo-btn" title="Отправить фото"><i class="fa-solid fa-image"></i><input type="file" id="photoInput" name="photos" accept="image/*" multiple hidden></label><div id="photoPreview" class="photo-preview-grid"></div><textarea id="messageInput" name="message" placeholder="Введите сообщение..." rows="1"></textarea><button type="submit"><i class="fa-solid fa-paper-plane"></i></button></form></div></main>
+                <main class="feed"><div class="chat-page"><div class="chat-header"><a href="/messages" class="back-link"><i class="fa-solid fa-arrow-left"></i></a><img src="${friend.avatar || "/images/logo.png"}" class="chat-avatar"><div><h2>${friend.username}</h2><p id="status-${friend.id}">${friendStatus}</p><p id="typingStatus" class="typing-status" style="display:none;">печатает...</p></div></div><div id="messages" class="chat-messages">${list || "<p class='empty-chat'>Сообщений пока нет.</p>"}</div><form class="chat-form" id="chatForm" enctype="multipart/form-data"><label class="photo-btn" title="Отправить фото"><i class="fa-solid fa-image"></i><input type="file" id="photoInput" name="photos" accept="image/*" multiple hidden></label><div id="photoPreview" class="photo-preview-grid"></div><textarea id="messageInput" name="message" placeholder="Введите сообщение..." rows="1"></textarea><button type="submit"><i class="fa-solid fa-paper-plane"></i></button></form></div></main>
                 <aside class="right-panel"><div class="side-card"><h3>Диалог</h3><p>👤 ${friend.username}</p><p id="side-status-${friend.id}">${friendStatus}</p></div><div class="side-card"><h3>Приватность</h3><p>🔒 Этот диалог видите только вы двое</p><p>💬 Сообщения сохраняются в PostgreSQL</p></div></aside>
             </div>
             <div id="photoModal" class="photo-modal" onclick="closePhoto()"><img id="modalPhoto"></div>
@@ -850,7 +925,27 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 const dialogId = "${dialogId}";
                 const currentUserId = "${currentUser.id}";
                 const friendId = "${friend.id}";
+                let typingTimer = null;
+                let isTyping = false;
                 socket.emit("join dialog", { dialogId, friendId });
+
+                function playMessageSound() {
+                    try {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        const ctx = new AudioContext();
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = "sine";
+                        osc.frequency.value = 720;
+                        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                        gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.015);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start();
+                        osc.stop(ctx.currentTime + 0.2);
+                    } catch (e) {}
+                }
 
                 function scrollChatBottom() { const messages = document.getElementById("messages"); requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; }); setTimeout(() => { messages.scrollTop = messages.scrollHeight; }, 100); }
                 function escapeHtml(text) { const div = document.createElement("div"); div.innerText = text || ""; return div.innerHTML; }
@@ -871,7 +966,27 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     row.querySelectorAll(".chat-photo").forEach(img => { img.addEventListener("click", () => openPhoto(img.src)); img.onload = scrollChatBottom; });
                     messages.appendChild(row); scrollChatBottom();
                 }
-                socket.on("private message", (data) => { if (String(data.fromId) !== String(currentUserId)) addMessage(data); });
+                socket.on("private message", (data) => {
+                    if (String(data.fromId) !== String(currentUserId)) {
+                        addMessage(data);
+                        playMessageSound();
+                    }
+                });
+
+                socket.on("typing", (data) => {
+                    if (String(data.userId) !== String(friendId)) return;
+                    const typing = document.getElementById("typingStatus");
+                    const status = document.getElementById("status-" + friendId);
+                    if (!typing || !status) return;
+
+                    if (data.isTyping) {
+                        status.style.display = "none";
+                        typing.style.display = "block";
+                    } else {
+                        typing.style.display = "none";
+                        status.style.display = "block";
+                    }
+                });
                 socket.on("messages read", (data) => {
                     if (String(data.readerId) === String(currentUserId)) return;
                     if (!Array.isArray(data.messageIds)) return;
@@ -895,14 +1010,28 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 const photoInput = document.getElementById("photoInput");
                 const photoPreview = document.getElementById("photoPreview");
                 messageInput.addEventListener("keydown", function(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chatForm.requestSubmit(); } });
-                messageInput.addEventListener("input", function() { this.style.height = "auto"; this.style.height = this.scrollHeight + "px"; });
+                messageInput.addEventListener("input", function() {
+                    this.style.height = "auto";
+                    this.style.height = this.scrollHeight + "px";
+
+                    if (!isTyping) {
+                        isTyping = true;
+                        socket.emit("typing", { dialogId, friendId, isTyping: true });
+                    }
+
+                    clearTimeout(typingTimer);
+                    typingTimer = setTimeout(() => {
+                        isTyping = false;
+                        socket.emit("typing", { dialogId, friendId, isTyping: false });
+                    }, 1400);
+                });
                 photoInput.addEventListener("change", () => { photoPreview.innerHTML = ""; const photos = Array.from(photoInput.files); if (photos.length === 0) { photoPreview.style.display = "none"; return; } photoPreview.style.display = "grid"; photos.forEach(photo => { const reader = new FileReader(); reader.onload = function(e) { const item = document.createElement("div"); item.className = "preview-item"; item.innerHTML = "<img src='" + e.target.result + "'><span>×</span>"; item.querySelector("span").addEventListener("click", () => { photoInput.value = ""; photoPreview.innerHTML = ""; photoPreview.style.display = "none"; }); photoPreview.appendChild(item); }; reader.readAsDataURL(photo); }); });
-                chatForm.addEventListener("submit", async function(e) { e.preventDefault(); const text = messageInput.value.trim(); const photos = photoInput.files; if (!text && photos.length === 0) return; const formData = new FormData(); formData.append("message", text); for (let i = 0; i < photos.length; i++) formData.append("photos", photos[i]); messageInput.value = ""; messageInput.style.height = "auto"; photoInput.value = ""; photoPreview.innerHTML = ""; photoPreview.style.display = "none"; const response = await fetch("/send-message/" + friendId, { method: "POST", body: formData }); const result = await response.json(); if (result.success && result.message) addMessage(result.message); else alert("Ошибка отправки сообщения"); });
+                chatForm.addEventListener("submit", async function(e) { e.preventDefault(); const text = messageInput.value.trim(); const photos = photoInput.files; if (!text && photos.length === 0) return; const formData = new FormData(); formData.append("message", text); for (let i = 0; i < photos.length; i++) formData.append("photos", photos[i]); messageInput.value = ""; messageInput.style.height = "auto"; photoInput.value = ""; photoPreview.innerHTML = ""; photoPreview.style.display = "none"; isTyping = false; socket.emit("typing", { dialogId, friendId, isTyping: false }); const response = await fetch("/send-message/" + friendId, { method: "POST", body: formData }); const result = await response.json(); if (result.success && result.message) addMessage(result.message); else alert("Ошибка отправки сообщения"); });
                 function openPhoto(src) { document.getElementById("modalPhoto").src = src; document.getElementById("photoModal").style.display = "flex"; }
                 function closePhoto() { document.getElementById("photoModal").style.display = "none"; }
                 window.addEventListener("load", () => setTimeout(scrollChatBottom, 100));
             </script>
-            <script src="/push.js?v=1"></script>
+            <script src="/push.js?v=2"></script>
         </body>
         </html>`);
     } catch (error) {
@@ -977,7 +1106,7 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
                 title: notificationTitle,
                 body: notificationBody,
                 url: notificationLink,
-                icon: "/assets/icon-192.png",
+                icon: currentUser.avatar || "/assets/icon-192.png",
                 badge: "/assets/icon-192.png"
             });
         }
@@ -1040,6 +1169,17 @@ io.on("connection", (socket) => {
         }
     });
 
+    socket.on("typing", (data) => {
+        const dialogId = data?.dialogId;
+        const userId = Number(socket.userId || socket.request.session?.userId);
+        if (!dialogId || !userId) return;
+
+        socket.to(dialogId).emit("typing", {
+            userId,
+            isTyping: !!data.isTyping
+        });
+    });
+
     socket.on("disconnect", async () => {
         const userId = Number(socket.userId || socket.request.session?.userId);
         if (!userId) return;
@@ -1062,27 +1202,6 @@ io.on("connection", (socket) => {
     });
 });
 
-
-app.get("/debug-push", requireAuth, async (req, res) => {
-    const result = await pool.query(
-        `SELECT id, user_id, endpoint, created_at
-         FROM push_subscriptions
-         WHERE user_id = $1
-         ORDER BY id DESC`,
-        [req.session.userId]
-    );
-
-    res.json({
-        userId: req.session.userId,
-        count: result.rows.length,
-        subscriptions: result.rows.map(s => ({
-            id: s.id,
-            user_id: s.user_id,
-            endpoint_start: s.endpoint.slice(0, 40),
-            created_at: s.created_at
-        }))
-    });
-});
 
 const PORT = process.env.PORT || 3000;
 

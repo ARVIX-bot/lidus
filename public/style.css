@@ -2801,3 +2801,156 @@ gap:12px;
         font-size: 14px !important;
     }
 }
+
+/* ===== LIDUS EXTRA MESSENGER FUNCTIONS ===== */
+.left-menu a {
+    position: relative;
+}
+
+.nav-link-inner {
+    display: inline-flex;
+    align-items: center;
+}
+
+.nav-unread-badge,
+.top-unread-badge,
+.dialog-unread-badge {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #8b5cf6, #c084fc);
+    color: white;
+    font-size: 12px;
+    font-weight: 900;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 18px rgba(139,92,246,.45);
+}
+
+.nav-unread-badge {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.top-icon-link {
+    position: relative;
+    color: white;
+    text-decoration: none;
+}
+
+.top-unread-badge {
+    position: absolute;
+    right: -6px;
+    top: -6px;
+}
+
+.dialog-row.has-unread {
+    background: rgba(139,92,246,.11) !important;
+}
+
+.dialog-row.has-unread .dialog-row-name,
+.dialog-row.has-unread .dialog-row-preview {
+    color: white !important;
+    font-weight: 800 !important;
+}
+
+.dialog-row.has-unread .dialog-row-time {
+    color: #c4b5fd !important;
+    font-weight: 800 !important;
+}
+
+.typing-status {
+    color: #9a6cff !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+}
+
+.notifications-page {
+    width: 100%;
+}
+
+.notifications-list {
+    display: grid;
+    gap: 12px;
+}
+
+.notification-item {
+    display: grid;
+    grid-template-columns: 12px 1fr;
+    gap: 12px;
+    align-items: start;
+    padding: 16px;
+    border-radius: 18px;
+    color: white;
+    text-decoration: none;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+}
+
+.notification-item:hover {
+    background: rgba(139,92,246,.12);
+}
+
+.notification-item.is-unread {
+    background: rgba(139,92,246,.14);
+}
+
+.notification-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-top: 7px;
+    background: #8b5cf6;
+    box-shadow: 0 0 12px rgba(139,92,246,.8);
+}
+
+.notification-item:not(.is-unread) .notification-dot {
+    background: rgba(255,255,255,.18);
+    box-shadow: none;
+}
+
+.notification-main p {
+    margin: 4px 0 6px;
+    color: #cfcfff;
+}
+
+.notification-main small {
+    color: #8f90a3;
+}
+
+@media (max-width: 768px) {
+    body:not(:has(.chat-page)) .left-menu a {
+        position: relative !important;
+    }
+
+    body:not(:has(.chat-page)) .nav-link-inner {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    body:not(:has(.chat-page)) .nav-unread-badge {
+        right: 15px !important;
+        top: 8px !important;
+        transform: none !important;
+        min-width: 18px !important;
+        height: 18px !important;
+        font-size: 10px !important;
+        padding: 0 5px !important;
+    }
+
+    .dialog-unread-badge {
+        min-width: 19px !important;
+        height: 19px !important;
+        font-size: 11px !important;
+    }
+
+    .notification-item {
+        padding: 14px !important;
+        border-radius: 16px !important;
+    }
+}
