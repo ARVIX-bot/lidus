@@ -489,6 +489,16 @@ app.get("/notifications-page", requireAuth, async (req, res) => {
                         ${list || "<div class='messages-empty'>Уведомлений пока нет</div>"}
                     </div>
                 </section>
+
+                <script src="/socket.io/socket.io.js"></script>
+
+<script>
+const socket = io();
+
+socket.on("private message", () => {
+    location.reload();
+});
+</script>
             `,
             rightPanel: `<div class="side-card"><h3>Уведомления</h3><p>Здесь появляются новые сообщения и события.</p></div>`
         }));
