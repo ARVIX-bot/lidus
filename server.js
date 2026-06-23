@@ -1085,7 +1085,9 @@ app.post("/room/:id/invite", requireAuth, async (req, res) => {
             id: insertResult.rows[0].id,
             dialogId,
             fromId: currentUser.id,
+            toId: invitedUser.id,
             fromName: currentUser.username,
+            fromAvatar: currentUser.avatar || "/images/logo.png",
             text: inviteText,
             photos: [],
             time: formatTime(insertResult.rows[0].created_at),
@@ -1093,7 +1095,10 @@ app.post("/room/:id/invite", requireAuth, async (req, res) => {
         };
 
         io.to(dialogId).emit("private message", messageForClient);
-io.emit("messages updated");
+io.emit("messages updated", {
+    participants: [currentUser.id, invitedUser.id],
+    message: messageForClient
+});
 
         await createNotification(
             invitedUser.id,
@@ -1383,7 +1388,7 @@ app.get("/messages", requireAuth, async (req, res) => {
                 : "";
 
             return `
-                <a href="/dialog/${d.id}" class="dialog-row ${isUnread ? "has-unread" : ""}">
+                <a href="/dialog/${d.id}" data-dialog-id="${d.id}" class="dialog-row ${isUnread ? "has-unread" : ""}">
                     <div class="dialog-avatar-wrap">
                         <img src="${d.avatar || "/images/logo.png"}" class="dialog-row-avatar">
                         ${onlineDot}
@@ -1407,25 +1412,106 @@ app.get("/messages", requireAuth, async (req, res) => {
             active: "messages",
             currentUser,
             body: `
-    <section class="messages-page">
+                <section class="messages-page">
+                    <div class="messages-head">
+                        <h1>Сообщения</h1>
+                        <div class="messages-head-actions">
+                            <button type="button" class="messages-icon-btn"><i class="fa-solid fa-ellipsis"></i></button>
+                            <a href="/users" class="messages-icon-btn primary"><i class="fa-solid fa-plus"></i></a>
+                        </div>
+                    </div>
 
-        ...
+                    <div class="messages-searchbar">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input placeholder="Люди, чаты и сообщения">
+                    </div>
 
-        <div class="messages-list">
-            ${list || "<div class='messages-empty'>Добавьте друга и начните диалог</div>"}
-        </div>
+                    <div class="messages-tabs">
+                        <button class="active" type="button">Все</button>
+                        <button type="button">Новые</button>
+                        <button type="button">Каналы</button>
+                    </div>
 
-    </section>
+                    <div class="messages-list">
+                        ${list || "<div class='messages-empty'>Добавьте друга и начните диалог</div>"}
+                    </div>
+                </section>
 
-    <script src="/socket.io/socket.io.js"></script>
+                <script src="/socket.io/socket.io.js"></script>
+                <script>
+                    const socket = io();
+                    const currentUserId = "${currentUser.id}";
 
-    <script>
-        const socket = io();
+                    function escapeDialogText(text) {
+                        const div = document.createElement("div");
+                        div.innerText = text || "";
+                        return div.innerHTML;
+                    }
 
-        socket.on("messages updated", () => {
-            location.reload();
-        });
-    </script>
+                    function shortDialogText(text) {
+                        const clean = String(text || "").trim();
+                        if (!clean) return "Новое сообщение";
+                        return clean.length > 80 ? clean.slice(0, 80) + "…" : clean;
+                    }
+
+                    function updateMessagesBadge(delta) {
+                        const selectors = [".nav-unread-badge", ".top-unread-badge"];
+                        selectors.forEach(selector => {
+                            const badge = document.querySelector(selector);
+                            if (!badge) return;
+                            const current = Number((badge.textContent || "0").replace("99+", "99")) || 0;
+                            const next = Math.max(0, current + delta);
+                            badge.textContent = next > 99 ? "99+" : String(next);
+                        });
+                    }
+
+                    socket.on("messages updated", (payload) => {
+                        const data = payload && payload.message ? payload.message : null;
+                        if (!data) return;
+
+                        const participants = (payload.participants || []).map(String);
+                        if (!participants.includes(String(currentUserId))) return;
+
+                        const isIncoming = String(data.toId) === String(currentUserId);
+                        const otherId = String(data.fromId) === String(currentUserId) ? String(data.toId) : String(data.fromId);
+                        const row = document.querySelector('.dialog-row[data-dialog-id="' + otherId + '"]') || document.querySelector('a[href="/dialog/' + otherId + '"]');
+
+                        if (!row) {
+                            location.reload();
+                            return;
+                        }
+
+                        row.classList.toggle("has-unread", isIncoming);
+
+                        const preview = row.querySelector(".dialog-row-preview");
+                        if (preview) {
+                            if (data.text && String(data.text).trim()) preview.textContent = shortDialogText(data.text);
+                            else if (data.photos && data.photos.length) preview.textContent = "📷 Фото";
+                            else preview.textContent = "Новое сообщение";
+                        }
+
+                        const time = row.querySelector(".dialog-row-time");
+                        if (time) time.textContent = data.time || "";
+
+                        const checks = row.querySelector(".dialog-row-checks");
+                        if (checks) {
+                            if (isIncoming) {
+                                const oldBadge = checks.querySelector(".dialog-unread-badge");
+                                const oldCount = oldBadge ? Number(oldBadge.textContent.replace("99+", "99")) || 0 : 0;
+                                const nextCount = Math.min(100, oldCount + 1);
+                                checks.innerHTML = '<div class="dialog-unread-badge">' + (nextCount > 99 ? "99+" : nextCount) + '</div>';
+                                updateMessagesBadge(1);
+                            } else {
+                                checks.innerHTML = '<span class="dialog-read-status">' +
+                                    '<svg class="msg-checks" viewBox="0 0 10 12" aria-hidden="true"><path d="M1 6L4 9L9 1"/></svg>' +
+                                    '</span>';
+                            }
+                        }
+
+                        const list = document.querySelector(".messages-list");
+                        if (list) list.prepend(row);
+                    });
+                </script>
 `,
             rightPanel: `<div class="side-card"><h3>Статистика</h3><p>💬 Диалогов: ${dialogs.length}</p></div><div class="side-card"><h3>Подсказка</h3><p>👥 Добавляйте новых друзей</p><p>🔒 Сообщения приватны</p></div>`
         }));
@@ -1802,7 +1888,9 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
             id: newMessageId,
             dialogId,
             fromId: currentUser.id,
+            toId: friend.id,
             fromName: currentUser.username,
+            fromAvatar: currentUser.avatar || "/images/logo.png",
             text,
             photos,
             time: formatTime(insertResult.rows[0].created_at),
@@ -1810,7 +1898,10 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
         };
 
         io.to(dialogId).emit("private message", messageForClient);
-io.emit("messages updated");
+io.emit("messages updated", {
+    participants: [currentUser.id, friend.id],
+    message: messageForClient
+});
 
         const pushText = text && text.trim() ? text.trim() : (photos.length ? "📷 Фото" : "Новое сообщение");
         const notificationTitle = currentUser.username;
