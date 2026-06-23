@@ -1098,12 +1098,30 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     <span>Общая громкость собеседников: <b id="outputVolumeValue">100%</b></span>
                                     <input type="range" id="outputVolumeRange" min="0" max="200" value="100">
                                 </label>
+
+                                <label class="voice-setting-field">
+                                    <span>Чувствительность микрофона: <b id="micSensitivityValue">35%</b></span>
+                                    <input type="range" id="micSensitivityRange" min="0" max="100" value="35">
+                                </label>
+
+                                <label class="voice-setting-field">
+                                    <span>Noise Gate: <b id="noiseGateValue">45%</b></span>
+                                    <input type="range" id="noiseGateRange" min="0" max="100" value="45">
+                                </label>
+
+                                <label class="voice-setting-field">
+                                    <span>Усиление голоса: <b id="voiceBoostValue">115%</b></span>
+                                    <input type="range" id="voiceBoostRange" min="0" max="200" value="115">
+                                </label>
                             </div>
 
                             <div class="voice-quality-toggles">
-                                <label><input type="checkbox" id="noiseSuppressionToggle" checked> Шумоподавление</label>
+                                <label><input type="checkbox" id="noiseSuppressionToggle" checked> Шумоподавление браузера</label>
                                 <label><input type="checkbox" id="echoCancellationToggle" checked> Эхоподавление</label>
                                 <label><input type="checkbox" id="autoGainToggle" checked> Автоусиление</label>
+                                <label><input type="checkbox" id="noiseGateToggle" checked> Noise Gate Pro</label>
+                                <label><input type="checkbox" id="compressorToggle" checked> Компрессор голоса</label>
+                                <label><input type="checkbox" id="highPassToggle" checked> Срез гула</label>
                             </div>
                         </div>
 
@@ -1137,14 +1155,27 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             const micVolumeValue = document.getElementById("micVolumeValue");
                             const outputVolumeRange = document.getElementById("outputVolumeRange");
                             const outputVolumeValue = document.getElementById("outputVolumeValue");
+                            const micSensitivityRange = document.getElementById("micSensitivityRange");
+                            const micSensitivityValue = document.getElementById("micSensitivityValue");
+                            const noiseGateRange = document.getElementById("noiseGateRange");
+                            const noiseGateValue = document.getElementById("noiseGateValue");
+                            const voiceBoostRange = document.getElementById("voiceBoostRange");
+                            const voiceBoostValue = document.getElementById("voiceBoostValue");
                             const noiseSuppressionToggle = document.getElementById("noiseSuppressionToggle");
                             const echoCancellationToggle = document.getElementById("echoCancellationToggle");
                             const autoGainToggle = document.getElementById("autoGainToggle");
+                            const noiseGateToggle = document.getElementById("noiseGateToggle");
+                            const compressorToggle = document.getElementById("compressorToggle");
+                            const highPassToggle = document.getElementById("highPassToggle");
 
                             let rawLocalStream = null;
                             let localStream = null;
                             let audioContext = null;
                             let micGainNode = null;
+                            let voiceBoostNode = null;
+                            let gateGainNode = null;
+                            let gateAnalyserNode = null;
+                            let gateAnimationFrame = null;
                             let isMuted = false;
                             let joinedVoice = false;
                             const peers = new Map();
@@ -1170,6 +1201,57 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
                             function getMicVolume() {
                                 return Math.max(0, Number(micVolumeRange?.value || 100)) / 100;
+                            }
+
+                            function getVoiceBoost() {
+                                return Math.max(0, Number(voiceBoostRange?.value || 115)) / 100;
+                            }
+
+                            function getNoiseGateThreshold() {
+                                const raw = Math.max(0, Number(noiseGateRange?.value || 45)) / 100;
+                                const sensitivity = Math.max(0, Number(micSensitivityRange?.value || 35)) / 100;
+                                return Math.max(0.002, 0.09 * raw * (1.15 - sensitivity));
+                            }
+
+                            function stopNoiseGateLoop() {
+                                if (gateAnimationFrame) {
+                                    cancelAnimationFrame(gateAnimationFrame);
+                                    gateAnimationFrame = null;
+                                }
+                            }
+
+                            function startNoiseGateLoop() {
+                                stopNoiseGateLoop();
+                                if (!gateAnalyserNode || !gateGainNode) return;
+
+                                const samples = new Uint8Array(gateAnalyserNode.fftSize);
+
+                                function tick() {
+                                    gateAnalyserNode.getByteTimeDomainData(samples);
+
+                                    let sum = 0;
+                                    for (let i = 0; i < samples.length; i++) {
+                                        const value = (samples[i] - 128) / 128;
+                                        sum += value * value;
+                                    }
+
+                                    const rms = Math.sqrt(sum / samples.length);
+                                    const threshold = getNoiseGateThreshold();
+                                    const gateEnabled = !!noiseGateToggle?.checked;
+                                    const target = (!gateEnabled || rms >= threshold) ? 1 : 0;
+                                    const now = audioContext ? audioContext.currentTime : 0;
+
+                                    try {
+                                        gateGainNode.gain.cancelScheduledValues(now);
+                                        gateGainNode.gain.setTargetAtTime(target, now, target ? 0.018 : 0.055);
+                                    } catch (e) {
+                                        gateGainNode.gain.value = target;
+                                    }
+
+                                    gateAnimationFrame = requestAnimationFrame(tick);
+                                }
+
+                                tick();
                             }
 
                             function getOutputVolume() {
@@ -1219,17 +1301,63 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
                             async function buildProcessedStream(stream) {
                                 rawLocalStream = stream;
+                                stopNoiseGateLoop();
+
                                 try {
                                     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
                                     if (!AudioContextClass) return stream;
+
                                     audioContext = audioContext || new AudioContextClass();
                                     if (audioContext.state === "suspended") await audioContext.resume();
+
                                     const source = audioContext.createMediaStreamSource(stream);
+                                    const destination = audioContext.createMediaStreamDestination();
+
                                     micGainNode = audioContext.createGain();
                                     micGainNode.gain.value = getMicVolume();
-                                    const destination = audioContext.createMediaStreamDestination();
-                                    source.connect(micGainNode);
-                                    micGainNode.connect(destination);
+
+                                    voiceBoostNode = audioContext.createGain();
+                                    voiceBoostNode.gain.value = getVoiceBoost();
+
+                                    gateGainNode = audioContext.createGain();
+                                    gateGainNode.gain.value = 1;
+
+                                    gateAnalyserNode = audioContext.createAnalyser();
+                                    gateAnalyserNode.fftSize = 1024;
+                                    gateAnalyserNode.smoothingTimeConstant = 0.35;
+
+                                    let lastNode = source;
+
+                                    if (highPassToggle?.checked && audioContext.createBiquadFilter) {
+                                        const highPass = audioContext.createBiquadFilter();
+                                        highPass.type = "highpass";
+                                        highPass.frequency.value = 120;
+                                        highPass.Q.value = 0.7;
+                                        lastNode.connect(highPass);
+                                        lastNode = highPass;
+                                    }
+
+                                    lastNode.connect(gateAnalyserNode);
+                                    lastNode.connect(micGainNode);
+                                    lastNode = micGainNode;
+
+                                    if (compressorToggle?.checked && audioContext.createDynamicsCompressor) {
+                                        const compressor = audioContext.createDynamicsCompressor();
+                                        compressor.threshold.value = -34;
+                                        compressor.knee.value = 22;
+                                        compressor.ratio.value = 7;
+                                        compressor.attack.value = 0.004;
+                                        compressor.release.value = 0.18;
+                                        lastNode.connect(compressor);
+                                        lastNode = compressor;
+                                    }
+
+                                    lastNode.connect(voiceBoostNode);
+                                    voiceBoostNode.connect(gateGainNode);
+                                    gateGainNode.connect(destination);
+
+                                    startNoiseGateLoop();
+
                                     return destination.stream;
                                 } catch (error) {
                                     console.error("Ошибка обработки микрофона:", error);
@@ -1423,6 +1551,11 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     rawLocalStream.getTracks().forEach(function(track) { track.stop(); });
                                     rawLocalStream = null;
                                 }
+                                stopNoiseGateLoop();
+                                micGainNode = null;
+                                voiceBoostNode = null;
+                                gateGainNode = null;
+                                gateAnalyserNode = null;
                                 setButtons(false);
                                 if (muteBtn) muteBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i> Мут';
                                 setStatus("Вы отключены от микрофона. Список участников голоса остаётся видимым.");
@@ -1532,6 +1665,25 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 });
                             }
 
+                            if (micSensitivityRange) {
+                                micSensitivityRange.addEventListener("input", function() {
+                                    if (micSensitivityValue) micSensitivityValue.textContent = micSensitivityRange.value + "%";
+                                });
+                            }
+
+                            if (noiseGateRange) {
+                                noiseGateRange.addEventListener("input", function() {
+                                    if (noiseGateValue) noiseGateValue.textContent = noiseGateRange.value + "%";
+                                });
+                            }
+
+                            if (voiceBoostRange) {
+                                voiceBoostRange.addEventListener("input", function() {
+                                    if (voiceBoostValue) voiceBoostValue.textContent = voiceBoostRange.value + "%";
+                                    if (voiceBoostNode) voiceBoostNode.gain.value = getVoiceBoost();
+                                });
+                            }
+
                             if (outputVolumeRange) {
                                 outputVolumeRange.addEventListener("input", function() {
                                     if (outputVolumeValue) outputVolumeValue.textContent = outputVolumeRange.value + "%";
@@ -1549,12 +1701,18 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 });
                             }
 
-                            [noiseSuppressionToggle, echoCancellationToggle, autoGainToggle].forEach(function(toggle) {
+                            [noiseSuppressionToggle, echoCancellationToggle, autoGainToggle, compressorToggle, highPassToggle].forEach(function(toggle) {
                                 if (!toggle) return;
                                 toggle.addEventListener("change", function() {
-                                    if (joinedVoice) setStatus("Настройки улучшения звука применятся после переподключения к голосу.");
+                                    if (joinedVoice) setStatus("Эта настройка применится после переподключения к голосу.");
                                 });
                             });
+
+                            if (noiseGateToggle) {
+                                noiseGateToggle.addEventListener("change", function() {
+                                    setStatus(noiseGateToggle.checked ? "Noise Gate включён: тихие шумы будут отсекаться." : "Noise Gate выключен.");
+                                });
+                            }
 
                             if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
                                 navigator.mediaDevices.addEventListener("devicechange", loadAudioDevices);
@@ -1664,7 +1822,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         .room-invite-form label{display:block;margin-bottom:9px;font-weight:900;}
                         .room-invite-line{display:flex;gap:10px;}
                         .room-invite-line input{flex:1;min-width:0;}.voice-settings-card{margin-top:18px;width:100%;max-width:640px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:16px;text-align:left}.voice-settings-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.voice-settings-head h3{margin:0;font-size:16px}.voice-settings-head span{font-size:12px;color:#9c9caf;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.voice-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.voice-setting-field{display:flex;flex-direction:column;gap:7px;padding:11px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06)}.voice-setting-field span{font-size:13px;color:#d8d8e8;font-weight:900}.voice-setting-field select,.voice-setting-field input[type=range]{width:100%}.voice-quality-toggles{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.voice-quality-toggles label{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:999px;background:rgba(139,92,255,.14);font-size:12px;font-weight:900;color:#ddd7ff}.voice-live-card{margin-top:18px;width:100%;max-width:640px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:16px;text-align:left}.voice-live-card h3{margin:0 0 12px;font-size:16px}.voice-users-list{display:flex;flex-direction:column;gap:8px}.voice-empty{color:#9c9caf;font-size:14px}.voice-user-row{display:flex;flex-direction:column;gap:9px;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.06)}.voice-user-topline{display:flex;align-items:center;gap:10px;width:100%}.voice-user-dot{width:10px;height:10px;border-radius:50%;background:#35e88b;box-shadow:0 0 16px rgba(53,232,139,.75)}.voice-user-name{flex:1;font-weight:900}.voice-muted,.voice-speaking,.voice-me{font-size:11px;text-transform:uppercase;letter-spacing:.08em;border-radius:999px;padding:4px 7px;font-weight:900}.voice-muted{background:rgba(255,80,80,.16);color:#ffb6b6}.voice-speaking{background:rgba(53,232,139,.14);color:#aef5ce}.voice-me{background:rgba(139,92,255,.18);color:#d8ccff;margin-left:5px}.voice-peer-volume{display:grid;grid-template-columns:82px 1fr 48px;align-items:center;gap:8px}.voice-peer-volume span,.voice-peer-volume b{font-size:12px;color:#a9a9bd}.voice-peer-volume b{text-align:right;color:#fff}
-                        @media(max-width:768px){.room-header-actions{gap:8px}.room-settings-gear{width:44px;height:44px;border-radius:15px}.room-count{min-width:86px}.room-privacy-badges{gap:6px}.room-privacy-badges span{font-size:11px;padding:6px 8px}.room-settings-window{padding:18px;border-radius:22px}.room-settings-head h2{font-size:21px}.room-invite-line{flex-direction:column}.room-invite-line button{width:100%;}.room-toggle-row{grid-template-columns:44px 1fr;padding:12px}.room-toggle-row small{font-size:12px}}
+                        @media(max-width:768px){.room-header-actions{gap:8px}.room-settings-gear{width:44px;height:44px;border-radius:15px}.room-count{min-width:86px}.room-privacy-badges{gap:6px}.room-privacy-badges span{font-size:11px;padding:6px 8px}.room-settings-window{padding:18px;border-radius:22px}.room-settings-head h2{font-size:21px}.room-invite-line{flex-direction:column}.room-invite-line button{width:100%;}.room-toggle-row{grid-template-columns:44px 1fr;padding:12px}.room-toggle-row small{font-size:12px}.voice-settings-grid{grid-template-columns:1fr}.voice-settings-head{align-items:flex-start;flex-direction:column}.voice-quality-toggles{gap:7px}.voice-peer-volume{grid-template-columns:74px 1fr 44px}}
                     </style>
 
                     <div class="room-members-card">
