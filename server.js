@@ -175,7 +175,14 @@ async function getCurrentUser(req) {
                 FROM messages m
                 WHERE m.to_id = u.id
                 AND m.read_at IS NULL
-            ) AS unread_total
+            ) AS unread_total,
+            (
+                SELECT COUNT(*)::int
+                FROM notifications n
+                WHERE n.user_id = u.id
+                AND n.is_read = FALSE
+                AND n.type != 'message'
+            ) AS notifications_total
          FROM users u
          WHERE u.id = $1`,
         [req.session.userId]
@@ -305,7 +312,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
                 <div class="topbar">
                     <div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input placeholder="Поиск в Lidus"></div>
                     <div class="topbar-right">
-                        <a class="top-icon top-icon-link" href="/notifications-page"><i class="fa-solid fa-bell"></i>${Number(currentUser?.unread_total || 0) > 0 ? `<span class="top-unread-badge">${Number(currentUser.unread_total) > 99 ? "99+" : currentUser.unread_total}</span>` : ""}</a>
+                        <a class="top-icon top-icon-link" href="/notifications-page"><i class="fa-solid fa-bell"></i>${Number(currentUser?.notifications_total || 0) > 0 ? `<span class="top-unread-badge">${Number(currentUser.notifications_total) > 99 ? "99+" : currentUser.notifications_total}</span>` : ""}</a>
                         <div class="top-icon"><i class="fa-solid fa-envelope"></i></div>
                         <div class="profile-mini"><img src="${avatar}" class="top-avatar"><span>${username}</span></div>
                     </div>
@@ -332,7 +339,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
                     return Number(text) || 0;
                 }
 
-                function ensureNavBadge() {
+                function ensureMessagesBadge() {
                     let badge = document.querySelector(".nav-unread-badge");
                     if (badge) return badge;
                     const messagesLink = document.querySelector('.left-menu a[href="/messages"]');
@@ -344,7 +351,7 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
                     return badge;
                 }
 
-                function ensureTopBadge() {
+                function ensureNotificationsBadge() {
                     let badge = document.querySelector(".top-unread-badge");
                     if (badge) return badge;
                     const bell = document.querySelector(".top-icon-link");
@@ -356,31 +363,40 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
                     return badge;
                 }
 
-                window.setLidusUnreadTotal = function(value) {
+                function setBadgeValue(badge, value) {
+                    if (!badge) return;
                     const next = Math.max(0, Number(value || 0));
-                    [ensureNavBadge(), ensureTopBadge()].forEach((badge) => {
-                        if (!badge) return;
-                        if (next <= 0) {
-                            badge.textContent = "";
-                            badge.style.display = "none";
-                        } else {
-                            badge.textContent = formatBadgeValue(next);
-                            badge.style.display = "";
-                        }
-                    });
+                    if (next <= 0) {
+                        badge.textContent = "";
+                        badge.style.display = "none";
+                    } else {
+                        badge.textContent = formatBadgeValue(next);
+                        badge.style.display = "";
+                    }
+                }
+
+                window.setLidusUnreadTotal = function(value) {
+                    setBadgeValue(ensureMessagesBadge(), value);
                 };
 
                 window.changeLidusUnreadTotal = function(delta) {
-                    const nav = ensureNavBadge();
-                    const top = ensureTopBadge();
-                    const current = Math.max(readBadgeValue(nav), readBadgeValue(top));
-                    window.setLidusUnreadTotal(current + Number(delta || 0));
+                    const badge = ensureMessagesBadge();
+                    setBadgeValue(badge, readBadgeValue(badge) + Number(delta || 0));
+                };
+
+                window.setLidusNotificationsTotal = function(value) {
+                    setBadgeValue(ensureNotificationsBadge(), value);
+                };
+
+                window.changeLidusNotificationsTotal = function(delta) {
+                    const badge = ensureNotificationsBadge();
+                    setBadgeValue(badge, readBadgeValue(badge) + Number(delta || 0));
                 };
 
                 window.lidusSocket.on("lidus notification", function(data) {
                     if (!data) return;
-                    if (data.unreadTotal !== undefined) window.setLidusUnreadTotal(data.unreadTotal);
-                    else window.changeLidusUnreadTotal(1);
+                    if (data.notificationsTotal !== undefined) window.setLidusNotificationsTotal(data.notificationsTotal);
+                    else window.changeLidusNotificationsTotal(1);
                 });
 
                 window.lidusSocket.on("messages read by me", function(data) {
@@ -500,6 +516,7 @@ app.get("/notifications", requireAuth, async (req, res) => {
             `SELECT id, type, title, body, link, is_read, created_at
              FROM notifications
              WHERE user_id = $1
+             AND type != 'message'
              ORDER BY created_at DESC
              LIMIT 50`,
             [req.session.userId]
@@ -515,7 +532,7 @@ app.get("/notifications", requireAuth, async (req, res) => {
 app.post("/notifications/read", requireAuth, async (req, res) => {
     try {
         await pool.query(
-            `UPDATE notifications SET is_read = TRUE WHERE user_id = $1`,
+            `UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND type != 'message'  AND type != 'message' `,
             [req.session.userId]
         );
 
@@ -535,6 +552,7 @@ app.get("/notifications-page", requireAuth, async (req, res) => {
             `SELECT id, type, title, body, link, is_read, created_at
              FROM notifications
              WHERE user_id = $1
+             AND type != 'message'
              ORDER BY created_at DESC
              LIMIT 50`,
             [currentUser.id]
@@ -601,7 +619,7 @@ app.get("/notifications-page", requireAuth, async (req, res) => {
                     }
                 </script>
             `,
-            rightPanel: `<div class="side-card"><h3>Уведомления</h3><p>Здесь появляются новые сообщения и события.</p></div>`
+            rightPanel: `<div class="side-card"><h3>Уведомления</h3><p>Здесь появляются приглашения, запросы в друзья и системные события.</p></div>`
         }));
     } catch (error) {
         console.error(error);
@@ -1332,7 +1350,10 @@ app.get("/add-friend/:id", requireAuth, async (req, res) => {
     if (!targetUserId || currentUserId === targetUserId) return res.redirect("/users");
 
     try {
-        const target = await pool.query(`SELECT id FROM users WHERE id = $1`, [targetUserId]);
+        const currentUser = await getCurrentUser(req);
+        if (!currentUser) return req.session.destroy(() => res.redirect("/login.html"));
+
+        const target = await pool.query(`SELECT id, username FROM users WHERE id = $1`, [targetUserId]);
         if (target.rows.length === 0) return res.status(404).send("Пользователь не найден");
 
         await pool.query(
@@ -1343,6 +1364,21 @@ app.get("/add-friend/:id", requireAuth, async (req, res) => {
             `INSERT INTO friends (user_id, friend_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
             [targetUserId, currentUserId]
         );
+
+        await createNotification(
+            targetUserId,
+            "friend_add",
+            "Новый друг",
+            `${currentUser.username} добавил вас в друзья`,
+            "/friends"
+        );
+
+        io.to("user_" + targetUserId).emit("lidus notification", {
+            type: "friend_add",
+            title: "Новый друг",
+            body: `${currentUser.username} добавил вас в друзья`,
+            link: "/friends"
+        });
 
         res.redirect("/friends");
     } catch (error) {
@@ -2044,17 +2080,6 @@ io.emit("messages updated", {
         const notificationTitle = currentUser.username;
         const notificationBody = pushText.length > 80 ? pushText.slice(0, 80) + "…" : pushText;
         const notificationLink = "/dialog/" + currentUser.id;
-
-        await createNotification(friend.id, "message", notificationTitle, notificationBody, notificationLink);
-
-        if (!friendHasDialogOpen) {
-            io.to("user_" + friend.id).emit("lidus notification", {
-                type: "message",
-                title: notificationTitle,
-                body: notificationBody,
-                link: notificationLink
-            });
-        }
 
         if (!friendHasDialogOpen) {
             await sendPushNotification(friend.id, {
