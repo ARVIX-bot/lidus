@@ -1093,6 +1093,10 @@ app.post("/room/:id/invite", requireAuth, async (req, res) => {
         };
 
         io.to(dialogId).emit("private message", messageForClient);
+        io.emit("messages updated", {
+    fromId: sender.id,
+    toId: receiver.id
+});
 
         await createNotification(
             invitedUser.id,
@@ -1406,31 +1410,26 @@ app.get("/messages", requireAuth, async (req, res) => {
             active: "messages",
             currentUser,
             body: `
-                <section class="messages-page">
-                    <div class="messages-head">
-                        <h1>Сообщения</h1>
-                        <div class="messages-head-actions">
-                            <button type="button" class="messages-icon-btn"><i class="fa-solid fa-ellipsis"></i></button>
-                            <a href="/users" class="messages-icon-btn primary"><i class="fa-solid fa-plus"></i></a>
-                        </div>
-                    </div>
+    <section class="messages-page">
 
-                    <div class="messages-searchbar">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <input placeholder="Люди, чаты и сообщения">
-                    </div>
+        ...
 
-                    <div class="messages-tabs">
-                        <button class="active" type="button">Все</button>
-                        <button type="button">Новые</button>
-                        <button type="button">Каналы</button>
-                    </div>
+        <div class="messages-list">
+            ${list || "<div class='messages-empty'>Добавьте друга и начните диалог</div>"}
+        </div>
 
-                    <div class="messages-list">
-                        ${list || "<div class='messages-empty'>Добавьте друга и начните диалог</div>"}
-                    </div>
-                </section>
-            `,
+    </section>
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+        const socket = io();
+
+        socket.on("messages updated", () => {
+            location.reload();
+        });
+    </script>
+`,
             rightPanel: `<div class="side-card"><h3>Статистика</h3><p>💬 Диалогов: ${dialogs.length}</p></div><div class="side-card"><h3>Подсказка</h3><p>👥 Добавляйте новых друзей</p><p>🔒 Сообщения приватны</p></div>`
         }));
     } catch (error) {
@@ -1814,6 +1813,10 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
         };
 
         io.to(dialogId).emit("private message", messageForClient);
+        io.emit("messages updated", {
+    fromId: sender.id,
+    toId: receiver.id
+});
 
         const pushText = text && text.trim() ? text.trim() : (photos.length ? "📷 Фото" : "Новое сообщение");
         const notificationTitle = currentUser.username;
