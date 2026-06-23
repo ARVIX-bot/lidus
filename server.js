@@ -1093,10 +1093,7 @@ app.post("/room/:id/invite", requireAuth, async (req, res) => {
         };
 
         io.to(dialogId).emit("private message", messageForClient);
-        io.emit("messages updated", {
-    fromId: sender.id,
-    toId: receiver.id
-});
+io.emit("messages updated");
 
         await createNotification(
             invitedUser.id,
@@ -1813,10 +1810,7 @@ app.post("/send-message/:id", requireAuth, messagePhotoUpload.array("photos", 10
         };
 
         io.to(dialogId).emit("private message", messageForClient);
-        io.emit("messages updated", {
-    fromId: sender.id,
-    toId: receiver.id
-});
+io.emit("messages updated");
 
         const pushText = text && text.trim() ? text.trim() : (photos.length ? "📷 Фото" : "Новое сообщение");
         const notificationTitle = currentUser.username;
