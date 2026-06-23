@@ -314,6 +314,82 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
             </main>
             <aside class="right-panel">${rightPanel}</aside>
         </div>
+        <script src="/socket.io/socket.io.js"></script>
+        <script>
+            (function() {
+                if (!window.io) return;
+                window.lidusSocket = window.lidusSocket || io();
+
+                function formatBadgeValue(value) {
+                    const count = Math.max(0, Number(value || 0));
+                    return count > 99 ? "99+" : String(count);
+                }
+
+                function readBadgeValue(badge) {
+                    if (!badge) return 0;
+                    const text = String(badge.textContent || "0").trim();
+                    if (text === "99+") return 99;
+                    return Number(text) || 0;
+                }
+
+                function ensureNavBadge() {
+                    let badge = document.querySelector(".nav-unread-badge");
+                    if (badge) return badge;
+                    const messagesLink = document.querySelector('.left-menu a[href="/messages"]');
+                    if (!messagesLink) return null;
+                    badge = document.createElement("span");
+                    badge.className = "nav-unread-badge";
+                    badge.style.display = "none";
+                    messagesLink.appendChild(badge);
+                    return badge;
+                }
+
+                function ensureTopBadge() {
+                    let badge = document.querySelector(".top-unread-badge");
+                    if (badge) return badge;
+                    const bell = document.querySelector(".top-icon-link");
+                    if (!bell) return null;
+                    badge = document.createElement("span");
+                    badge.className = "top-unread-badge";
+                    badge.style.display = "none";
+                    bell.appendChild(badge);
+                    return badge;
+                }
+
+                window.setLidusUnreadTotal = function(value) {
+                    const next = Math.max(0, Number(value || 0));
+                    [ensureNavBadge(), ensureTopBadge()].forEach((badge) => {
+                        if (!badge) return;
+                        if (next <= 0) {
+                            badge.textContent = "";
+                            badge.style.display = "none";
+                        } else {
+                            badge.textContent = formatBadgeValue(next);
+                            badge.style.display = "";
+                        }
+                    });
+                };
+
+                window.changeLidusUnreadTotal = function(delta) {
+                    const nav = ensureNavBadge();
+                    const top = ensureTopBadge();
+                    const current = Math.max(readBadgeValue(nav), readBadgeValue(top));
+                    window.setLidusUnreadTotal(current + Number(delta || 0));
+                };
+
+                window.lidusSocket.on("lidus notification", function(data) {
+                    if (!data) return;
+                    if (data.unreadTotal !== undefined) window.setLidusUnreadTotal(data.unreadTotal);
+                    else window.changeLidusUnreadTotal(1);
+                });
+
+                window.lidusSocket.on("messages read by me", function(data) {
+                    if (!data) return;
+                    if (data.unreadTotal !== undefined) window.setLidusUnreadTotal(data.unreadTotal);
+                    else window.changeLidusUnreadTotal(-Number(data.count || 0));
+                });
+            })();
+        </script>
         <script src="/push.js?v=2"></script>
     </body>
     </html>`;
@@ -490,15 +566,40 @@ app.get("/notifications-page", requireAuth, async (req, res) => {
                     </div>
                 </section>
 
-                <script src="/socket.io/socket.io.js"></script>
+                <script>
+                    const notificationsSocket = window.lidusSocket || (window.io ? io() : null);
 
-<script>
-const socket = io();
+                    function escapeNotificationText(text) {
+                        const div = document.createElement("div");
+                        div.innerText = text || "";
+                        return div.innerHTML;
+                    }
 
-socket.on("private message", () => {
-    location.reload();
-});
-</script>
+                    function addRealtimeNotification(data) {
+                        if (!data) return;
+                        const list = document.querySelector(".notifications-list");
+                        if (!list) return;
+
+                        const empty = list.querySelector(".messages-empty");
+                        if (empty) empty.remove();
+
+                        const item = document.createElement("a");
+                        item.href = data.link || data.url || "/messages";
+                        item.className = "notification-item is-unread";
+                        item.innerHTML =
+                            '<div class="notification-dot"></div>' +
+                            '<div class="notification-main">' +
+                                '<b>' + escapeNotificationText(data.title || "Новое уведомление") + '</b>' +
+                                '<p>' + escapeNotificationText(data.body || "Новое сообщение") + '</p>' +
+                                '<small>только что</small>' +
+                            '</div>';
+                        list.prepend(item);
+                    }
+
+                    if (notificationsSocket) {
+                        notificationsSocket.on("lidus notification", addRealtimeNotification);
+                    }
+                </script>
             `,
             rightPanel: `<div class="side-card"><h3>Уведомления</h3><p>Здесь появляются новые сообщения и события.</p></div>`
         }));
@@ -1108,6 +1209,13 @@ io.emit("messages updated", {
             "/room/" + room.id
         );
 
+        io.to("user_" + invitedUser.id).emit("lidus notification", {
+            type: "room_invite",
+            title: "Приглашение в комнату",
+            body: `${currentUser.username} пригласил вас в «${room.name}»`,
+            link: "/room/" + room.id
+        });
+
         await sendPushNotification(invitedUser.id, {
             title: "Приглашение в комнату",
             body: `${currentUser.username} пригласил вас в «${room.name}»`,
@@ -1455,6 +1563,11 @@ app.get("/messages", requireAuth, async (req, res) => {
                     }
 
                     function updateMessagesBadge(delta) {
+                        if (window.changeLidusUnreadTotal) {
+                            window.changeLidusUnreadTotal(delta);
+                            return;
+                        }
+
                         const selectors = [".nav-unread-badge", ".top-unread-badge"];
                         selectors.forEach(selector => {
                             const badge = document.querySelector(selector);
@@ -1462,8 +1575,27 @@ app.get("/messages", requireAuth, async (req, res) => {
                             const current = Number((badge.textContent || "0").replace("99+", "99")) || 0;
                             const next = Math.max(0, current + delta);
                             badge.textContent = next > 99 ? "99+" : String(next);
+                            badge.style.display = next > 0 ? "" : "none";
                         });
                     }
+
+                    function clearDialogUnread(friendId) {
+                        const row = document.querySelector('.dialog-row[data-dialog-id="' + friendId + '"]') || document.querySelector('a[href="/dialog/' + friendId + '"]');
+                        if (row) {
+                            row.classList.remove("has-unread");
+                            const checks = row.querySelector(".dialog-row-checks");
+                            if (checks) checks.innerHTML = "";
+                        }
+                    }
+
+                    socket.on("messages read by me", (payload) => {
+                        if (!payload) return;
+                        if (payload.unreadTotal !== undefined && window.setLidusUnreadTotal) {
+                            window.setLidusUnreadTotal(payload.unreadTotal);
+                        } else {
+                            clearDialogUnread(String(payload.friendId || ""));
+                        }
+                    });
 
                     socket.on("messages updated", (payload) => {
                         const data = payload && payload.message ? payload.message : null;
@@ -1545,6 +1677,11 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
             io.to(dialogId).emit("messages read", {
                 readerId: currentUser.id,
                 messageIds: readResult.rows.map(row => row.id)
+            });
+
+            io.to("user_" + currentUser.id).emit("messages read by me", {
+                friendId: friend.id,
+                count: readResult.rows.length
             });
         }
 
@@ -1911,6 +2048,15 @@ io.emit("messages updated", {
         await createNotification(friend.id, "message", notificationTitle, notificationBody, notificationLink);
 
         if (!friendHasDialogOpen) {
+            io.to("user_" + friend.id).emit("lidus notification", {
+                type: "message",
+                title: notificationTitle,
+                body: notificationBody,
+                link: notificationLink
+            });
+        }
+
+        if (!friendHasDialogOpen) {
             await sendPushNotification(friend.id, {
                 title: notificationTitle,
                 body: notificationBody,
@@ -1940,6 +2086,7 @@ io.on("connection", (socket) => {
     const connectedUserId = Number(socket.request.session?.userId);
     if (connectedUserId) {
         socket.userId = connectedUserId;
+        socket.join("user_" + connectedUserId);
         onlineUsers[connectedUserId] = true;
         io.emit("online update", onlineUsers);
     }
@@ -1970,6 +2117,11 @@ io.on("connection", (socket) => {
                     io.to(dialogId).emit("messages read", {
                         readerId: userId,
                         messageIds: readResult.rows.map(row => row.id)
+                    });
+
+                    io.to("user_" + userId).emit("messages read by me", {
+                        friendId,
+                        count: readResult.rows.length
                     });
                 }
             } catch (error) {
