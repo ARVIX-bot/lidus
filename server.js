@@ -137,6 +137,48 @@ fs.mkdirSync("public/message-photos", { recursive: true });
 fs.mkdirSync("public/avatars", { recursive: true });
 
 let onlineUsers = {};
+const activeVoiceRooms = new Map();
+
+function getVoiceParticipants(roomId) {
+    const room = activeVoiceRooms.get(String(roomId));
+    if (!room) return [];
+
+    return Array.from(room.values()).map(user => ({
+        id: user.id,
+        username: user.username,
+        avatar: user.avatar,
+        muted: !!user.muted
+    }));
+}
+
+function emitVoiceParticipants(roomId) {
+    const roomKey = String(roomId);
+    io.to("voice_room_" + roomKey).emit("voice participants updated", {
+        roomId: roomKey,
+        participants: getVoiceParticipants(roomKey)
+    });
+}
+
+function removeSocketFromVoiceRoom(socket) {
+    const roomId = socket.voiceRoomId;
+    const userId = socket.voiceUserId;
+    if (!roomId || !userId) return;
+
+    const roomKey = String(roomId);
+    const room = activeVoiceRooms.get(roomKey);
+
+    socket.leave("voice_room_" + roomKey);
+
+    if (room) {
+        room.delete(String(userId));
+        if (room.size === 0) activeVoiceRooms.delete(roomKey);
+    }
+
+    socket.voiceRoomId = null;
+    socket.voiceUserId = null;
+
+    emitVoiceParticipants(roomKey);
+}
 
 const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET || "lidus_secret_key",
@@ -1028,14 +1070,24 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
                     <div class="voice-stage">
                         <div class="voice-stage-icon"><i class="fa-solid fa-headset"></i></div>
-                        <h2>Голосовой чат скоро</h2>
-                        <p>Комнаты уже работают. Следующим шагом подключим WebRTC: микрофон, мут, демонстрацию экрана и стрим.</p>
+                        <h2>Голосовой канал</h2>
+                        <p id="voiceStatusText">Пока это realtime-лобби голоса. Следующим шагом подключим настоящий WebRTC-аудио поток.</p>
 
                         <div class="voice-controls">
-                            <button type="button" class="voice-btn disabled"><i class="fa-solid fa-microphone"></i> Микрофон</button>
-                            <button type="button" class="voice-btn disabled"><i class="fa-solid fa-volume-xmark"></i> Мут</button>
-                            <button type="button" class="voice-btn disabled"><i class="fa-solid fa-display"></i> Экран</button>
-                            <a class="voice-btn danger" href="/room/${room.id}/leave"><i class="fa-solid fa-door-open"></i> Выйти</a>
+                            <button type="button" id="voiceJoinBtn" class="voice-btn"><i class="fa-solid fa-microphone"></i> Подключиться</button>
+                            <button type="button" id="voiceMuteBtn" class="voice-btn disabled" disabled><i class="fa-solid fa-microphone-slash"></i> Мут</button>
+                            <button type="button" class="voice-btn disabled" disabled><i class="fa-solid fa-display"></i> Экран позже</button>
+                            <button type="button" id="voiceLeaveBtn" class="voice-btn danger disabled" disabled><i class="fa-solid fa-phone-slash"></i> Отключиться</button>
+                        </div>
+
+                        <div class="voice-live-panel">
+                            <div class="voice-live-head">
+                                <b><i class="fa-solid fa-signal"></i> В голосе</b>
+                                <span id="voiceLiveCount">0</span>
+                            </div>
+                            <div id="voiceParticipantsList" class="voice-participants-list">
+                                <div class="voice-empty">Пока никто не подключился к голосу</div>
+                            </div>
                         </div>
                     </div>
 
@@ -1106,6 +1158,124 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
 
 
+                    <script src="/socket.io/socket.io.js"></script>
+                    <script>
+                        const voiceSocket = io();
+                        const voiceRoomId = "${room.id}";
+                        const voiceCurrentUser = {
+                            id: "${currentUser.id}",
+                            username: "${escapeHtmlServer(currentUser.username)}",
+                            avatar: "${currentUser.avatar || "/images/logo.png"}"
+                        };
+                        let voiceJoined = false;
+                        let voiceMuted = false;
+
+                        const voiceJoinBtn = document.getElementById("voiceJoinBtn");
+                        const voiceMuteBtn = document.getElementById("voiceMuteBtn");
+                        const voiceLeaveBtn = document.getElementById("voiceLeaveBtn");
+                        const voiceStatusText = document.getElementById("voiceStatusText");
+                        const voiceParticipantsList = document.getElementById("voiceParticipantsList");
+                        const voiceLiveCount = document.getElementById("voiceLiveCount");
+
+                        function escapeVoiceText(text) {
+                            const div = document.createElement("div");
+                            div.innerText = text || "";
+                            return div.innerHTML;
+                        }
+
+                        function setVoiceButtons() {
+                            if (!voiceJoinBtn || !voiceMuteBtn || !voiceLeaveBtn) return;
+
+                            voiceJoinBtn.disabled = voiceJoined;
+                            voiceJoinBtn.classList.toggle("disabled", voiceJoined);
+                            voiceJoinBtn.classList.toggle("is-active", voiceJoined);
+                            voiceJoinBtn.innerHTML = voiceJoined
+                                ? '<i class="fa-solid fa-headset"></i> Подключён'
+                                : '<i class="fa-solid fa-microphone"></i> Подключиться';
+
+                            voiceMuteBtn.disabled = !voiceJoined;
+                            voiceMuteBtn.classList.toggle("disabled", !voiceJoined);
+                            voiceMuteBtn.innerHTML = voiceMuted
+                                ? '<i class="fa-solid fa-microphone-slash"></i> Мут включён'
+                                : '<i class="fa-solid fa-microphone"></i> Микрофон активен';
+
+                            voiceLeaveBtn.disabled = !voiceJoined;
+                            voiceLeaveBtn.classList.toggle("disabled", !voiceJoined);
+
+                            if (voiceStatusText) {
+                                voiceStatusText.textContent = voiceJoined
+                                    ? "Вы подключены к голосовому лобби. Настоящий звук подключим следующим шагом через WebRTC."
+                                    : "Пока это realtime-лобби голоса. Следующим шагом подключим настоящий WebRTC-аудио поток.";
+                            }
+                        }
+
+                        function renderVoiceParticipants(participants) {
+                            const users = Array.isArray(participants) ? participants : [];
+                            if (voiceLiveCount) voiceLiveCount.textContent = users.length;
+                            if (!voiceParticipantsList) return;
+
+                            if (!users.length) {
+                                voiceParticipantsList.innerHTML = '<div class="voice-empty">Пока никто не подключился к голосу</div>';
+                                return;
+                            }
+
+                            voiceParticipantsList.innerHTML = users.map(user => {
+                                const isMe = String(user.id) === String(voiceCurrentUser.id);
+                                const muted = user.muted ? " · мут" : "";
+                                return '<div class="voice-user" data-user-id="' + escapeVoiceText(user.id) + '">' +
+                                    '<img src="' + escapeVoiceText(user.avatar || "/images/logo.png") + '">' +
+                                    '<div><b>' + escapeVoiceText(user.username || "Lidus") + (isMe ? " · вы" : "") + '</b>' +
+                                    '<span>В голосе' + muted + '</span></div>' +
+                                    '<div class="voice-speaking-dot"></div>' +
+                                '</div>';
+                            }).join("");
+                        }
+
+                        if (voiceJoinBtn) {
+                            voiceJoinBtn.addEventListener("click", () => {
+                                voiceSocket.emit("voice join", {
+                                    roomId: voiceRoomId,
+                                    user: voiceCurrentUser
+                                });
+                                voiceJoined = true;
+                                voiceMuted = false;
+                                setVoiceButtons();
+                            });
+                        }
+
+                        if (voiceMuteBtn) {
+                            voiceMuteBtn.addEventListener("click", () => {
+                                if (!voiceJoined) return;
+                                voiceMuted = !voiceMuted;
+                                voiceSocket.emit("voice mute", {
+                                    roomId: voiceRoomId,
+                                    muted: voiceMuted
+                                });
+                                setVoiceButtons();
+                            });
+                        }
+
+                        if (voiceLeaveBtn) {
+                            voiceLeaveBtn.addEventListener("click", () => {
+                                voiceSocket.emit("voice leave", { roomId: voiceRoomId });
+                                voiceJoined = false;
+                                voiceMuted = false;
+                                setVoiceButtons();
+                            });
+                        }
+
+                        voiceSocket.on("voice participants updated", (data) => {
+                            if (!data || String(data.roomId) !== String(voiceRoomId)) return;
+                            renderVoiceParticipants(data.participants || []);
+                        });
+
+                        window.addEventListener("beforeunload", () => {
+                            if (voiceJoined) voiceSocket.emit("voice leave", { roomId: voiceRoomId });
+                        });
+
+                        setVoiceButtons();
+                    </script>
+
                     <style>
                         .room-header-actions{display:flex;align-items:center;gap:14px;}
                         .room-settings-gear{width:52px;height:52px;border-radius:18px;padding:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);display:grid;place-items:center;font-size:20px;box-shadow:none;}
@@ -1133,7 +1303,20 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         .room-invite-line{display:flex;gap:10px;}
                         .room-invite-line input{flex:1;min-width:0;}
                         @media(max-width:768px){.room-header-actions{gap:8px}.room-settings-gear{width:44px;height:44px;border-radius:15px}.room-count{min-width:86px}.room-privacy-badges{gap:6px}.room-privacy-badges span{font-size:11px;padding:6px 8px}.room-settings-window{padding:18px;border-radius:22px}.room-settings-head h2{font-size:21px}.room-invite-line{flex-direction:column}.room-invite-line button{width:100%;}.room-toggle-row{grid-template-columns:44px 1fr;padding:12px}.room-toggle-row small{font-size:12px}}
+                        .voice-live-panel{margin-top:18px;width:min(520px,100%);border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:14px;text-align:left;}
+                        .voice-live-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;color:#fff;}
+                        .voice-live-head span{min-width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:rgba(139,92,255,.25);font-weight:900;color:#fff;}
+                        .voice-participants-list{display:flex;flex-direction:column;gap:9px;}
+                        .voice-user{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);}
+                        .voice-user img{width:36px;height:36px;border-radius:50%;object-fit:cover;}
+                        .voice-user b{display:block;font-size:14px;}
+                        .voice-user span{font-size:12px;color:#9c9caf;}
+                        .voice-user .voice-speaking-dot{margin-left:auto;width:10px;height:10px;border-radius:50%;background:#38e88f;box-shadow:0 0 12px rgba(56,232,143,.8);}
+                        .voice-empty{padding:12px;border-radius:16px;background:rgba(0,0,0,.18);color:#9c9caf;text-align:center;font-weight:800;}
+                        .voice-btn.is-active{background:linear-gradient(135deg,#6b4dff,#9a6cff);color:white;}
+                        @media(max-width:768px){.voice-live-panel{padding:12px;border-radius:18px}.voice-user{padding:9px 10px}.voice-user img{width:32px;height:32px}}
                     </style>
+
 
                     <div class="room-members-card">
                         <h2>Участники</h2>
@@ -2212,7 +2395,52 @@ io.on("connection", (socket) => {
         });
     });
 
+    socket.on("voice join", (data) => {
+        const userId = Number(socket.userId || socket.request.session?.userId);
+        const roomId = String(data?.roomId || "").trim();
+        if (!userId || !roomId) return;
+
+        removeSocketFromVoiceRoom(socket);
+
+        socket.join("voice_room_" + roomId);
+        socket.voiceRoomId = roomId;
+        socket.voiceUserId = userId;
+
+        if (!activeVoiceRooms.has(roomId)) activeVoiceRooms.set(roomId, new Map());
+
+        const room = activeVoiceRooms.get(roomId);
+        room.set(String(userId), {
+            id: userId,
+            username: String(data?.user?.username || "Lidus").slice(0, 60),
+            avatar: String(data?.user?.avatar || "/images/logo.png"),
+            muted: false
+        });
+
+        emitVoiceParticipants(roomId);
+    });
+
+    socket.on("voice mute", (data) => {
+        const userId = Number(socket.voiceUserId || socket.userId || socket.request.session?.userId);
+        const roomId = String(data?.roomId || socket.voiceRoomId || "").trim();
+        if (!userId || !roomId) return;
+
+        const room = activeVoiceRooms.get(roomId);
+        if (!room || !room.has(String(userId))) return;
+
+        const user = room.get(String(userId));
+        user.muted = !!data?.muted;
+        room.set(String(userId), user);
+
+        emitVoiceParticipants(roomId);
+    });
+
+    socket.on("voice leave", () => {
+        removeSocketFromVoiceRoom(socket);
+    });
+
     socket.on("disconnect", async () => {
+        removeSocketFromVoiceRoom(socket);
+
         const userId = Number(socket.userId || socket.request.session?.userId);
         if (!userId) return;
 
