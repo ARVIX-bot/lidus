@@ -404,6 +404,11 @@ function pageHtml({ title, active, currentUser, body, rightPanel = "" }) {
                     if (data.unreadTotal !== undefined) window.setLidusUnreadTotal(data.unreadTotal);
                     else window.changeLidusUnreadTotal(-Number(data.count || 0));
                 });
+
+                window.lidusSocket.on("messages unread total", function(data) {
+                    if (!data) return;
+                    window.setLidusUnreadTotal(data.unreadTotal || 0);
+                });
             })();
         </script>
         <script src="/push.js?v=2"></script>
@@ -428,6 +433,35 @@ async function createNotification(userId, type, title, body, link) {
     } catch (error) {
         console.error("Ошибка создания уведомления:", error);
     }
+}
+
+async function getUnreadMessagesTotal(userId) {
+    if (!hasDatabase || !userId) return 0;
+
+    try {
+        const result = await pool.query(
+            `SELECT COUNT(*)::int AS total
+             FROM messages
+             WHERE to_id = $1
+             AND read_at IS NULL`,
+            [userId]
+        );
+
+        return Number(result.rows[0]?.total || 0);
+    } catch (error) {
+        console.error("Ошибка подсчёта непрочитанных сообщений:", error);
+        return 0;
+    }
+}
+
+function emitUnreadMessagesTotal(userId) {
+    if (!userId) return;
+
+    getUnreadMessagesTotal(userId).then((unreadTotal) => {
+        io.to("user_" + userId).emit("messages unread total", { unreadTotal });
+    }).catch((error) => {
+        console.error("Ошибка realtime счётчика сообщений:", error);
+    });
 }
 
 async function sendPushNotification(userId, payload) {
@@ -532,7 +566,7 @@ app.get("/notifications", requireAuth, async (req, res) => {
 app.post("/notifications/read", requireAuth, async (req, res) => {
     try {
         await pool.query(
-            `UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND type != 'message'  AND type != 'message' `,
+            `UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND type != 'message'`,
             [req.session.userId]
         );
 
@@ -569,7 +603,7 @@ app.get("/notifications-page", requireAuth, async (req, res) => {
             </a>
         `).join("");
 
-        await pool.query(`UPDATE notifications SET is_read = TRUE WHERE user_id = $1`, [currentUser.id]);
+        await pool.query(`UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND type != 'message'`, [currentUser.id]);
 
         res.send(pageHtml({
             title: "Уведомления",
@@ -1218,6 +1252,7 @@ io.emit("messages updated", {
     participants: [currentUser.id, invitedUser.id],
     message: messageForClient
 });
+emitUnreadMessagesTotal(invitedUser.id);
 
         await createNotification(
             invitedUser.id,
@@ -1628,9 +1663,13 @@ app.get("/messages", requireAuth, async (req, res) => {
                         if (!payload) return;
                         if (payload.unreadTotal !== undefined && window.setLidusUnreadTotal) {
                             window.setLidusUnreadTotal(payload.unreadTotal);
-                        } else {
-                            clearDialogUnread(String(payload.friendId || ""));
                         }
+                        clearDialogUnread(String(payload.friendId || ""));
+                    });
+
+                    socket.on("messages unread total", (payload) => {
+                        if (!payload) return;
+                        if (window.setLidusUnreadTotal) window.setLidusUnreadTotal(payload.unreadTotal || 0);
                     });
 
                     socket.on("messages updated", (payload) => {
@@ -1715,9 +1754,12 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 messageIds: readResult.rows.map(row => row.id)
             });
 
+            const unreadTotal = await getUnreadMessagesTotal(currentUser.id);
+
             io.to("user_" + currentUser.id).emit("messages read by me", {
                 friendId: friend.id,
-                count: readResult.rows.length
+                count: readResult.rows.length,
+                unreadTotal
             });
         }
 
@@ -2075,6 +2117,7 @@ io.emit("messages updated", {
     participants: [currentUser.id, friend.id],
     message: messageForClient
 });
+emitUnreadMessagesTotal(friend.id);
 
         const pushText = text && text.trim() ? text.trim() : (photos.length ? "📷 Фото" : "Новое сообщение");
         const notificationTitle = currentUser.username;
@@ -2144,9 +2187,12 @@ io.on("connection", (socket) => {
                         messageIds: readResult.rows.map(row => row.id)
                     });
 
+                    const unreadTotal = await getUnreadMessagesTotal(userId);
+
                     io.to("user_" + userId).emit("messages read by me", {
                         friendId,
-                        count: readResult.rows.length
+                        count: readResult.rows.length,
+                        unreadTotal
                     });
                 }
             } catch (error) {
