@@ -1117,6 +1117,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
                             <div class="voice-quality-toggles">
                                 <label><input type="checkbox" id="noiseSuppressionToggle" checked> Шумоподавление браузера</label>
+                                <label><input type="checkbox" id="rnnoiseToggle" checked> AI шумоподавление RNNoise</label>
                                 <label><input type="checkbox" id="echoCancellationToggle" checked> Эхоподавление</label>
                                 <label><input type="checkbox" id="autoGainToggle" checked> Автоусиление</label>
                                 <label><input type="checkbox" id="noiseGateToggle" checked> Noise Gate Pro</label>
@@ -1167,6 +1168,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             const noiseGateToggle = document.getElementById("noiseGateToggle");
                             const compressorToggle = document.getElementById("compressorToggle");
                             const highPassToggle = document.getElementById("highPassToggle");
+                            const rnnoiseToggle = document.getElementById("rnnoiseToggle");
 
                             let rawLocalStream = null;
                             let localStream = null;
@@ -1175,7 +1177,19 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             let voiceBoostNode = null;
                             let gateGainNode = null;
                             let gateAnalyserNode = null;
+                                try {
+                                    if (rnnoiseModule && rnnoiseState && (rnnoiseModule.rnnoiseDestroy || rnnoiseModule._rnnoise_destroy)) {
+                                        (rnnoiseModule.rnnoiseDestroy || rnnoiseModule._rnnoise_destroy)(rnnoiseState);
+                                    }
+                                } catch (e) {}
+                                rnnoiseState = null;
                             let gateAnimationFrame = null;
+                            let rnnoiseModule = null;
+                            let rnnoiseReadyPromise = null;
+                            let rnnoiseState = null;
+                            let rnnoiseBufferPtr = 0;
+                            let rnnoiseInputBuffer = null;
+                            let rnnoiseOutputBuffer = null;
                             let isMuted = false;
                             let joinedVoice = false;
                             const peers = new Map();
@@ -1197,6 +1211,131 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 const div = document.createElement("div");
                                 div.innerText = text || "";
                                 return div.innerHTML;
+                            }
+
+
+                            async function loadRNNoiseModule() {
+                                if (!rnnoiseToggle?.checked) return null;
+                                if (rnnoiseModule) return rnnoiseModule;
+                                if (rnnoiseReadyPromise) return rnnoiseReadyPromise;
+
+                                rnnoiseReadyPromise = new Promise(function(resolve) {
+                                    function finish(module) {
+                                        rnnoiseModule = module || window.Module || window.RNNoise || null;
+                                        if (!rnnoiseModule) {
+                                            console.warn("RNNoise не найден после загрузки скрипта");
+                                            resolve(null);
+                                            return;
+                                        }
+
+                                        if (typeof rnnoiseModule.cwrap === "function") {
+                                            try {
+                                                rnnoiseModule.rnnoiseCreate = rnnoiseModule.cwrap("rnnoise_create", "number", ["number"]);
+                                                rnnoiseModule.rnnoiseDestroy = rnnoiseModule.cwrap("rnnoise_destroy", null, ["number"]);
+                                                rnnoiseModule.rnnoiseProcessFrame = rnnoiseModule.cwrap("rnnoise_process_frame", "number", ["number", "number", "number"]);
+                                            } catch (error) {
+                                                console.warn("RNNoise cwrap недоступен:", error);
+                                            }
+                                        }
+
+                                        console.log("RNNoise загружен:", rnnoiseModule);
+                                        resolve(rnnoiseModule);
+                                    }
+
+                                    if (window.RNNoise || window.Module) {
+                                        finish(window.RNNoise || window.Module);
+                                        return;
+                                    }
+
+                                    const script = document.createElement("script");
+                                    script.src = "/rnnoise/rnnoise-sync.js";
+                                    script.async = true;
+                                    script.onload = function() {
+                                        setTimeout(function() {
+                                            if (typeof window.createRNNWasmModule === "function") {
+                                                window.createRNNWasmModule({
+                                                    locateFile: function(file) {
+                                                        return "/rnnoise/" + file;
+                                                    }
+                                                }).then(finish).catch(function(error) {
+                                                    console.warn("Ошибка createRNNWasmModule:", error);
+                                                    finish(window.Module || window.RNNoise || null);
+                                                });
+                                                return;
+                                            }
+
+                                            finish(window.Module || window.RNNoise || null);
+                                        }, 50);
+                                    };
+                                    script.onerror = function(error) {
+                                        console.warn("Не удалось загрузить /rnnoise/rnnoise-sync.js", error);
+                                        resolve(null);
+                                    };
+                                    document.head.appendChild(script);
+                                });
+
+                                return rnnoiseReadyPromise;
+                            }
+
+                            function createRNNoiseNode() {
+                                if (!audioContext || !rnnoiseModule || !rnnoiseToggle?.checked) return null;
+
+                                const processFrame =
+                                    rnnoiseModule.rnnoiseProcessFrame ||
+                                    rnnoiseModule._rnnoise_process_frame;
+                                const createState =
+                                    rnnoiseModule.rnnoiseCreate ||
+                                    rnnoiseModule._rnnoise_create;
+                                const malloc = rnnoiseModule._malloc;
+                                const HEAPF32 = rnnoiseModule.HEAPF32;
+
+                                if (!processFrame || !createState || !malloc || !HEAPF32) {
+                                    console.warn("RNNoise загружен, но API не найден. Используется Noise Gate Pro.");
+                                    return null;
+                                }
+
+                                try {
+                                    if (!rnnoiseState) rnnoiseState = createState(0);
+                                    if (!rnnoiseBufferPtr) rnnoiseBufferPtr = malloc(480 * 4 * 2);
+                                    rnnoiseInputBuffer = new Float32Array(480);
+                                    rnnoiseOutputBuffer = new Float32Array(480);
+
+                                    const processor = audioContext.createScriptProcessor(1024, 1, 1);
+                                    let pending = [];
+
+                                    processor.onaudioprocess = function(event) {
+                                        const input = event.inputBuffer.getChannelData(0);
+                                        const output = event.outputBuffer.getChannelData(0);
+
+                                        for (let i = 0; i < input.length; i++) pending.push(input[i]);
+
+                                        let outIndex = 0;
+                                        while (pending.length >= 480 && outIndex + 480 <= output.length) {
+                                            for (let i = 0; i < 480; i++) {
+                                                rnnoiseInputBuffer[i] = Math.max(-1, Math.min(1, pending.shift())) * 32768;
+                                            }
+
+                                            HEAPF32.set(rnnoiseInputBuffer, rnnoiseBufferPtr >> 2);
+                                            processFrame(rnnoiseState, rnnoiseBufferPtr, rnnoiseBufferPtr);
+
+                                            const processed = HEAPF32.subarray(rnnoiseBufferPtr >> 2, (rnnoiseBufferPtr >> 2) + 480);
+                                            for (let i = 0; i < 480; i++) {
+                                                output[outIndex++] = Math.max(-1, Math.min(1, processed[i] / 32768));
+                                            }
+                                        }
+
+                                        for (; outIndex < output.length; outIndex++) {
+                                            output[outIndex] = 0;
+                                        }
+
+                                        if (pending.length > 960) pending = pending.slice(-480);
+                                    };
+
+                                    return processor;
+                                } catch (error) {
+                                    console.warn("Ошибка создания RNNoise processor:", error);
+                                    return null;
+                                }
                             }
 
                             function getMicVolume() {
@@ -1310,6 +1449,8 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     audioContext = audioContext || new AudioContextClass();
                                     if (audioContext.state === "suspended") await audioContext.resume();
 
+                                    await loadRNNoiseModule();
+
                                     const source = audioContext.createMediaStreamSource(stream);
                                     const destination = audioContext.createMediaStreamDestination();
 
@@ -1327,6 +1468,13 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     gateAnalyserNode.smoothingTimeConstant = 0.35;
 
                                     let lastNode = source;
+
+                                    const rnnoiseNode = createRNNoiseNode();
+                                    if (rnnoiseNode) {
+                                        lastNode.connect(rnnoiseNode);
+                                        lastNode = rnnoiseNode;
+                                        setStatus("RNNoise включён: AI-шумоподавление обрабатывает микрофон.");
+                                    }
 
                                     if (highPassToggle?.checked && audioContext.createBiquadFilter) {
                                         const highPass = audioContext.createBiquadFilter();
@@ -1701,7 +1849,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 });
                             }
 
-                            [noiseSuppressionToggle, echoCancellationToggle, autoGainToggle, compressorToggle, highPassToggle].forEach(function(toggle) {
+                            [noiseSuppressionToggle, echoCancellationToggle, autoGainToggle, compressorToggle, highPassToggle, rnnoiseToggle].forEach(function(toggle) {
                                 if (!toggle) return;
                                 toggle.addEventListener("change", function() {
                                     if (joinedVoice) setStatus("Эта настройка применится после переподключения к голосу.");
