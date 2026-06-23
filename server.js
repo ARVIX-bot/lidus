@@ -1177,12 +1177,6 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             let voiceBoostNode = null;
                             let gateGainNode = null;
                             let gateAnalyserNode = null;
-                                try {
-                                    if (rnnoiseModule && rnnoiseState && (rnnoiseModule.rnnoiseDestroy || rnnoiseModule._rnnoise_destroy)) {
-                                        (rnnoiseModule.rnnoiseDestroy || rnnoiseModule._rnnoise_destroy)(rnnoiseState);
-                                    }
-                                } catch (e) {}
-                                rnnoiseState = null;
                             let gateAnimationFrame = null;
                             let rnnoiseModule = null;
                             let rnnoiseReadyPromise = null;
