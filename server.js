@@ -150,11 +150,6 @@ function getVoiceRoomUsers(roomId) {
     return Array.from(room.values());
 }
 
-function emitVoiceUsersToWatchers(roomId) {
-    const users = getVoiceRoomUsers(roomId);
-    io.to("voice_watch_" + roomId).emit("voice users", users);
-}
-
 function removeSocketFromVoiceRoom(socket) {
     const roomId = socket.voiceRoomId;
     if (!roomId) return;
@@ -163,15 +158,13 @@ function removeSocketFromVoiceRoom(socket) {
     const peer = room.get(socket.id);
     room.delete(socket.id);
 
-    socket.to("voice_" + roomId).emit("voice user left", {
+    const leftPayload = {
         socketId: socket.id,
         userId: peer?.userId
-    });
+    };
 
-    io.to("voice_watch_" + roomId).emit("voice user left", {
-        socketId: socket.id,
-        userId: peer?.userId
-    });
+    socket.to("voice_" + roomId).emit("voice user left", leftPayload);
+    io.to("voice_watch_" + roomId).emit("voice user left", leftPayload);
 
     if (room.size === 0) voiceRooms.delete(String(roomId));
 
@@ -1072,19 +1065,46 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         <h2>Голосовой чат</h2>
                         <p id="voiceStatusText">Подключитесь к голосу, чтобы общаться с участниками комнаты.</p>
 
-                        <div class="voice-settings-card">
-                            <label for="microphoneSelect"><i class="fa-solid fa-sliders"></i> Микрофон</label>
-                            <select id="microphoneSelect">
-                                <option value="">Основной микрофон</option>
-                            </select>
-                            <small>Можно выбрать другой микрофон до подключения или переключить во время разговора.</small>
-                        </div>
-
                         <div class="voice-controls">
                             <button type="button" class="voice-btn" id="joinVoiceBtn"><i class="fa-solid fa-microphone"></i> Подключиться</button>
                             <button type="button" class="voice-btn disabled" id="muteVoiceBtn" disabled><i class="fa-solid fa-volume-xmark"></i> Мут</button>
                             <button type="button" class="voice-btn danger disabled" id="leaveVoiceBtn" disabled><i class="fa-solid fa-door-open"></i> Отключиться</button>
                             <a class="voice-btn danger" href="/room/${room.id}/leave"><i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти из комнаты</a>
+                        </div>
+
+                        <div class="voice-settings-card">
+                            <div class="voice-settings-head">
+                                <h3><i class="fa-solid fa-sliders"></i> Настройки звука</h3>
+                                <span>микрофон и наушники</span>
+                            </div>
+
+                            <div class="voice-settings-grid">
+                                <label class="voice-setting-field">
+                                    <span>🎙 Микрофон</span>
+                                    <select id="micSelect"></select>
+                                </label>
+
+                                <label class="voice-setting-field">
+                                    <span>🎧 Наушники / динамики</span>
+                                    <select id="outputSelect"></select>
+                                </label>
+
+                                <label class="voice-setting-field">
+                                    <span>Громкость микрофона: <b id="micVolumeValue">100%</b></span>
+                                    <input type="range" id="micVolumeRange" min="0" max="200" value="100">
+                                </label>
+
+                                <label class="voice-setting-field">
+                                    <span>Общая громкость собеседников: <b id="outputVolumeValue">100%</b></span>
+                                    <input type="range" id="outputVolumeRange" min="0" max="200" value="100">
+                                </label>
+                            </div>
+
+                            <div class="voice-quality-toggles">
+                                <label><input type="checkbox" id="noiseSuppressionToggle" checked> Шумоподавление</label>
+                                <label><input type="checkbox" id="echoCancellationToggle" checked> Эхоподавление</label>
+                                <label><input type="checkbox" id="autoGainToggle" checked> Автоусиление</label>
+                            </div>
                         </div>
 
                         <div class="voice-live-card">
@@ -1111,13 +1131,25 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             const statusText = document.getElementById("voiceStatusText");
                             const usersList = document.getElementById("voiceUsersList");
                             const remoteAudios = document.getElementById("remoteAudios");
-                            const microphoneSelect = document.getElementById("microphoneSelect");
+                            const micSelect = document.getElementById("micSelect");
+                            const outputSelect = document.getElementById("outputSelect");
+                            const micVolumeRange = document.getElementById("micVolumeRange");
+                            const micVolumeValue = document.getElementById("micVolumeValue");
+                            const outputVolumeRange = document.getElementById("outputVolumeRange");
+                            const outputVolumeValue = document.getElementById("outputVolumeValue");
+                            const noiseSuppressionToggle = document.getElementById("noiseSuppressionToggle");
+                            const echoCancellationToggle = document.getElementById("echoCancellationToggle");
+                            const autoGainToggle = document.getElementById("autoGainToggle");
 
+                            let rawLocalStream = null;
                             let localStream = null;
+                            let audioContext = null;
+                            let micGainNode = null;
                             let isMuted = false;
                             let joinedVoice = false;
                             const peers = new Map();
                             const voiceUsers = new Map();
+                            const peerVolumes = new Map();
 
                             const rtcConfig = {
                                 iceServers: [
@@ -1136,6 +1168,90 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 return div.innerHTML;
                             }
 
+                            function getMicVolume() {
+                                return Math.max(0, Number(micVolumeRange?.value || 100)) / 100;
+                            }
+
+                            function getOutputVolume() {
+                                return Math.max(0, Number(outputVolumeRange?.value || 100)) / 100;
+                            }
+
+                            function getAudioConstraints() {
+                                const audio = {
+                                    echoCancellation: !!echoCancellationToggle?.checked,
+                                    noiseSuppression: !!noiseSuppressionToggle?.checked,
+                                    autoGainControl: !!autoGainToggle?.checked
+                                };
+                                if (micSelect && micSelect.value) audio.deviceId = { exact: micSelect.value };
+                                return { audio: audio, video: false };
+                            }
+
+                            async function loadAudioDevices() {
+                                if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+                                try {
+                                    const devices = await navigator.mediaDevices.enumerateDevices();
+                                    const inputs = devices.filter(function(device) { return device.kind === "audioinput"; });
+                                    const outputs = devices.filter(function(device) { return device.kind === "audiooutput"; });
+
+                                    if (micSelect) {
+                                        const selected = micSelect.value;
+                                        micSelect.innerHTML = inputs.map(function(device, index) {
+                                            return '<option value="' + device.deviceId + '">' + escapeVoiceText(device.label || ("Микрофон " + (index + 1))) + '</option>';
+                                        }).join("") || '<option value="">Микрофон по умолчанию</option>';
+                                        if (selected) micSelect.value = selected;
+                                    }
+
+                                    if (outputSelect) {
+                                        const selected = outputSelect.value;
+                                        outputSelect.innerHTML = outputs.map(function(device, index) {
+                                            return '<option value="' + device.deviceId + '">' + escapeVoiceText(device.label || ("Вывод " + (index + 1))) + '</option>';
+                                        }).join("") || '<option value="">Вывод по умолчанию</option>';
+                                        if (selected) outputSelect.value = selected;
+                                        if (!HTMLMediaElement.prototype.setSinkId) {
+                                            outputSelect.disabled = true;
+                                            outputSelect.innerHTML = '<option>Выбор наушников не поддерживается этим браузером</option>';
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error("Ошибка списка аудиоустройств:", error);
+                                }
+                            }
+
+                            async function buildProcessedStream(stream) {
+                                rawLocalStream = stream;
+                                try {
+                                    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                                    if (!AudioContextClass) return stream;
+                                    audioContext = audioContext || new AudioContextClass();
+                                    if (audioContext.state === "suspended") await audioContext.resume();
+                                    const source = audioContext.createMediaStreamSource(stream);
+                                    micGainNode = audioContext.createGain();
+                                    micGainNode.gain.value = getMicVolume();
+                                    const destination = audioContext.createMediaStreamDestination();
+                                    source.connect(micGainNode);
+                                    micGainNode.connect(destination);
+                                    return destination.stream;
+                                } catch (error) {
+                                    console.error("Ошибка обработки микрофона:", error);
+                                    return stream;
+                                }
+                            }
+
+                            function applyOutputSettingsToAudio(audio) {
+                                if (!audio) return;
+                                const peerVolume = Number(audio.dataset.peerVolume || 1);
+                                audio.volume = Math.max(0, Math.min(2, getOutputVolume() * peerVolume));
+                                if (outputSelect && outputSelect.value && typeof audio.setSinkId === "function") {
+                                    audio.setSinkId(outputSelect.value).catch(function(error) {
+                                        console.warn("Не удалось выбрать наушники:", error);
+                                    });
+                                }
+                            }
+
+                            function applyOutputSettings() {
+                                document.querySelectorAll("audio[id^='remote-audio-']").forEach(applyOutputSettingsToAudio);
+                            }
+
                             function renderVoiceUsers() {
                                 if (!usersList) return;
                                 const users = Array.from(voiceUsers.values());
@@ -1145,11 +1261,22 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 }
                                 usersList.innerHTML = users.map(function(user) {
                                     const muted = user.isMuted ? '<span class="voice-muted">мут</span>' : '<span class="voice-speaking">звук</span>';
-                                    const me = String(user.userId) === String(currentUserId) ? ' <span class="voice-me">вы</span>' : '';
+                                    const isMe = String(user.userId) === String(currentUserId);
+                                    const me = isMe ? ' <span class="voice-me">вы</span>' : '';
+                                    const savedVolume = Math.round((peerVolumes.get(user.socketId) || 1) * 100);
+                                    const volumeControl = isMe ? '' :
+                                        '<div class="voice-peer-volume">' +
+                                            '<span>Громкость</span>' +
+                                            '<input type="range" class="voice-peer-volume-range" data-socket-id="' + user.socketId + '" min="0" max="200" value="' + savedVolume + '">' +
+                                            '<b>' + savedVolume + '%</b>' +
+                                        '</div>';
                                     return '<div class="voice-user-row" id="voice-user-' + user.socketId + '">' +
-                                        '<div class="voice-user-dot"></div>' +
-                                        '<div class="voice-user-name">' + escapeVoiceText(user.username || "Участник") + me + '</div>' +
-                                        muted +
+                                        '<div class="voice-user-topline">' +
+                                            '<div class="voice-user-dot"></div>' +
+                                            '<div class="voice-user-name">' + escapeVoiceText(user.username || "Участник") + me + '</div>' +
+                                            muted +
+                                        '</div>' +
+                                        volumeControl +
                                     '</div>';
                                 }).join("");
                             }
@@ -1180,83 +1307,6 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                 }
                             }
 
-                            function getSelectedAudioConstraint() {
-                                const savedDeviceId = microphoneSelect ? microphoneSelect.value : "";
-                                if (savedDeviceId) {
-                                    return {
-                                        deviceId: { exact: savedDeviceId },
-                                        echoCancellation: true,
-                                        noiseSuppression: true,
-                                        autoGainControl: true
-                                    };
-                                }
-
-                                return {
-                                    echoCancellation: true,
-                                    noiseSuppression: true,
-                                    autoGainControl: true
-                                };
-                            }
-
-                            async function loadMicrophones() {
-                                if (!microphoneSelect || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-
-                                try {
-                                    const devices = await navigator.mediaDevices.enumerateDevices();
-                                    const microphones = devices.filter(function(device) {
-                                        return device.kind === "audioinput";
-                                    });
-
-                                    const saved = localStorage.getItem("lidus_microphone_device") || "";
-                                    microphoneSelect.innerHTML = '<option value="">Основной микрофон</option>' + microphones.map(function(device, index) {
-                                        const label = device.label || ("Микрофон " + (index + 1));
-                                        const selected = saved && device.deviceId === saved ? " selected" : "";
-                                        return '<option value="' + device.deviceId + '"' + selected + '>' + escapeVoiceText(label) + '</option>';
-                                    }).join("");
-
-                                    if (saved && Array.from(microphoneSelect.options).some(function(option) { return option.value === saved; })) {
-                                        microphoneSelect.value = saved;
-                                    }
-                                } catch (error) {
-                                    console.error("Ошибка списка микрофонов:", error);
-                                }
-                            }
-
-                            async function switchMicrophone() {
-                                if (!joinedVoice) return;
-
-                                try {
-                                    const newStream = await navigator.mediaDevices.getUserMedia({
-                                        audio: getSelectedAudioConstraint(),
-                                        video: false
-                                    });
-
-                                    const newTrack = newStream.getAudioTracks()[0];
-                                    if (!newTrack) return;
-
-                                    newTrack.enabled = !isMuted;
-
-                                    peers.forEach(function(pc) {
-                                        const sender = pc.getSenders().find(function(s) {
-                                            return s.track && s.track.kind === "audio";
-                                        });
-                                        if (sender) sender.replaceTrack(newTrack);
-                                    });
-
-                                    if (localStream) {
-                                        localStream.getAudioTracks().forEach(function(track) {
-                                            track.stop();
-                                        });
-                                    }
-
-                                    localStream = newStream;
-                                    setStatus("Микрофон переключён.");
-                                } catch (error) {
-                                    console.error("Ошибка переключения микрофона:", error);
-                                    setStatus("Не удалось переключить микрофон.");
-                                }
-                            }
-
                             function createAudioElement(socketId, stream) {
                                 let audio = document.getElementById("remote-audio-" + socketId);
                                 if (!audio) {
@@ -1267,6 +1317,8 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     if (remoteAudios) remoteAudios.appendChild(audio);
                                 }
                                 audio.srcObject = stream;
+                                audio.dataset.peerVolume = String(peerVolumes.get(socketId) || 1);
+                                applyOutputSettingsToAudio(audio);
                                 audio.play().catch(function() {});
                             }
 
@@ -1335,11 +1387,9 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             async function joinVoice() {
                                 if (joinedVoice) return;
                                 try {
-                                    localStream = await navigator.mediaDevices.getUserMedia({
-                                        audio: getSelectedAudioConstraint(),
-                                        video: false
-                                    });
-                                    await loadMicrophones();
+                                    const rawStream = await navigator.mediaDevices.getUserMedia(getAudioConstraints());
+                                    await loadAudioDevices();
+                                    localStream = await buildProcessedStream(rawStream);
                                     joinedVoice = true;
                                     isMuted = false;
                                     setButtons(true);
@@ -1369,9 +1419,14 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     localStream.getTracks().forEach(function(track) { track.stop(); });
                                     localStream = null;
                                 }
+                                if (rawLocalStream) {
+                                    rawLocalStream.getTracks().forEach(function(track) { track.stop(); });
+                                    rawLocalStream = null;
+                                }
                                 setButtons(false);
                                 if (muteBtn) muteBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i> Мут';
                                 setStatus("Вы отключены от микрофона. Список участников голоса остаётся видимым.");
+                                renderVoiceUsers();
                             }
 
                             function toggleMute() {
@@ -1397,23 +1452,12 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                             if (joinBtn) joinBtn.addEventListener("click", joinVoice);
                             if (leaveBtn) leaveBtn.addEventListener("click", leaveVoice);
                             if (muteBtn) muteBtn.addEventListener("click", toggleMute);
-                            if (microphoneSelect) {
-                                microphoneSelect.addEventListener("change", function() {
-                                    localStorage.setItem("lidus_microphone_device", microphoneSelect.value || "");
-                                    switchMicrophone();
-                                });
-                            }
-
-                            loadMicrophones();
-                            socket.emit("voice watch", { roomId: roomId });
 
                             socket.on("voice users", function(users) {
-                                voiceUsers.clear();
                                 (users || []).forEach(function(user) {
                                     addOrUpdateVoiceUser(user);
                                     if (joinedVoice && user.socketId !== socket.id) createPeer(user.socketId, true);
                                 });
-                                renderVoiceUsers();
                             });
 
                             socket.on("voice user joined", function(user) {
@@ -1463,6 +1507,61 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                                     console.error("Ошибка WebRTC signal:", error);
                                 }
                             });
+
+                            if (usersList) {
+                                usersList.addEventListener("input", function(event) {
+                                    const input = event.target;
+                                    if (!input.classList.contains("voice-peer-volume-range")) return;
+                                    const socketId = input.dataset.socketId;
+                                    const value = Math.max(0, Number(input.value || 100));
+                                    peerVolumes.set(socketId, value / 100);
+                                    const audio = document.getElementById("remote-audio-" + socketId);
+                                    if (audio) {
+                                        audio.dataset.peerVolume = String(value / 100);
+                                        applyOutputSettingsToAudio(audio);
+                                    }
+                                    const label = input.parentElement?.querySelector("b");
+                                    if (label) label.textContent = value + "%";
+                                });
+                            }
+
+                            if (micVolumeRange) {
+                                micVolumeRange.addEventListener("input", function() {
+                                    if (micVolumeValue) micVolumeValue.textContent = micVolumeRange.value + "%";
+                                    if (micGainNode) micGainNode.gain.value = getMicVolume();
+                                });
+                            }
+
+                            if (outputVolumeRange) {
+                                outputVolumeRange.addEventListener("input", function() {
+                                    if (outputVolumeValue) outputVolumeValue.textContent = outputVolumeRange.value + "%";
+                                    applyOutputSettings();
+                                });
+                            }
+
+                            if (outputSelect) outputSelect.addEventListener("change", applyOutputSettings);
+
+                            if (micSelect) {
+                                micSelect.addEventListener("change", function() {
+                                    if (joinedVoice) {
+                                        setStatus("Микрофон изменён. Переподключитесь к голосу, чтобы применить устройство.");
+                                    }
+                                });
+                            }
+
+                            [noiseSuppressionToggle, echoCancellationToggle, autoGainToggle].forEach(function(toggle) {
+                                if (!toggle) return;
+                                toggle.addEventListener("change", function() {
+                                    if (joinedVoice) setStatus("Настройки улучшения звука применятся после переподключения к голосу.");
+                                });
+                            });
+
+                            if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+                                navigator.mediaDevices.addEventListener("devicechange", loadAudioDevices);
+                            }
+
+                            socket.emit("voice watch", { roomId: roomId });
+                            loadAudioDevices();
 
                             window.addEventListener("beforeunload", function() {
                                 if (joinedVoice) socket.emit("voice leave", { roomId: roomId });
@@ -1564,7 +1663,7 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         .room-settings-divider{height:1px;background:rgba(255,255,255,.08);margin:20px 0;}
                         .room-invite-form label{display:block;margin-bottom:9px;font-weight:900;}
                         .room-invite-line{display:flex;gap:10px;}
-                        .room-invite-line input{flex:1;min-width:0;}.voice-settings-card{margin:18px auto 0;width:100%;max-width:520px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:14px;text-align:left}.voice-settings-card label{display:block;margin-bottom:8px;font-weight:900;color:#fff}.voice-settings-card select{width:100%;height:44px;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:#11131f;color:#fff;padding:0 12px;font-weight:800;outline:none}.voice-settings-card small{display:block;margin-top:8px;color:#9c9caf;font-size:12px}.voice-live-card{margin-top:18px;width:100%;max-width:520px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:16px;text-align:left}.voice-live-card h3{margin:0 0 12px;font-size:16px}.voice-users-list{display:flex;flex-direction:column;gap:8px}.voice-empty{color:#9c9caf;font-size:14px}.voice-user-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.06)}.voice-user-dot{width:10px;height:10px;border-radius:50%;background:#35e88b;box-shadow:0 0 16px rgba(53,232,139,.75)}.voice-user-name{flex:1;font-weight:900}.voice-muted,.voice-speaking,.voice-me{font-size:11px;text-transform:uppercase;letter-spacing:.08em;border-radius:999px;padding:4px 7px;font-weight:900}.voice-muted{background:rgba(255,80,80,.16);color:#ffb6b6}.voice-speaking{background:rgba(53,232,139,.14);color:#aef5ce}.voice-me{background:rgba(139,92,255,.18);color:#d8ccff;margin-left:5px}
+                        .room-invite-line input{flex:1;min-width:0;}.voice-settings-card{margin-top:18px;width:100%;max-width:640px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:16px;text-align:left}.voice-settings-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.voice-settings-head h3{margin:0;font-size:16px}.voice-settings-head span{font-size:12px;color:#9c9caf;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.voice-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.voice-setting-field{display:flex;flex-direction:column;gap:7px;padding:11px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06)}.voice-setting-field span{font-size:13px;color:#d8d8e8;font-weight:900}.voice-setting-field select,.voice-setting-field input[type=range]{width:100%}.voice-quality-toggles{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.voice-quality-toggles label{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:999px;background:rgba(139,92,255,.14);font-size:12px;font-weight:900;color:#ddd7ff}.voice-live-card{margin-top:18px;width:100%;max-width:640px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:16px;text-align:left}.voice-live-card h3{margin:0 0 12px;font-size:16px}.voice-users-list{display:flex;flex-direction:column;gap:8px}.voice-empty{color:#9c9caf;font-size:14px}.voice-user-row{display:flex;flex-direction:column;gap:9px;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.06)}.voice-user-topline{display:flex;align-items:center;gap:10px;width:100%}.voice-user-dot{width:10px;height:10px;border-radius:50%;background:#35e88b;box-shadow:0 0 16px rgba(53,232,139,.75)}.voice-user-name{flex:1;font-weight:900}.voice-muted,.voice-speaking,.voice-me{font-size:11px;text-transform:uppercase;letter-spacing:.08em;border-radius:999px;padding:4px 7px;font-weight:900}.voice-muted{background:rgba(255,80,80,.16);color:#ffb6b6}.voice-speaking{background:rgba(53,232,139,.14);color:#aef5ce}.voice-me{background:rgba(139,92,255,.18);color:#d8ccff;margin-left:5px}.voice-peer-volume{display:grid;grid-template-columns:82px 1fr 48px;align-items:center;gap:8px}.voice-peer-volume span,.voice-peer-volume b{font-size:12px;color:#a9a9bd}.voice-peer-volume b{text-align:right;color:#fff}
                         @media(max-width:768px){.room-header-actions{gap:8px}.room-settings-gear{width:44px;height:44px;border-radius:15px}.room-count{min-width:86px}.room-privacy-badges{gap:6px}.room-privacy-badges span{font-size:11px;padding:6px 8px}.room-settings-window{padding:18px;border-radius:22px}.room-settings-head h2{font-size:21px}.room-invite-line{flex-direction:column}.room-invite-line button{width:100%;}.room-toggle-row{grid-template-columns:44px 1fr;padding:12px}.room-toggle-row small{font-size:12px}}
                     </style>
 
@@ -2648,8 +2747,6 @@ io.on("connection", (socket) => {
     socket.on("voice watch", (data) => {
         const roomId = String(data?.roomId || "");
         if (!roomId) return;
-
-        socket.voiceWatchRoomId = roomId;
         socket.join("voice_watch_" + roomId);
         socket.emit("voice users", getVoiceRoomUsers(roomId));
     });
@@ -2687,7 +2784,6 @@ io.on("connection", (socket) => {
 
             socket.emit("voice users", existingUsers);
             socket.to(roomKey).emit("voice user joined", peer);
-            socket.join("voice_watch_" + roomId);
             io.to("voice_watch_" + roomId).emit("voice user joined", peer);
         } catch (error) {
             console.error("Ошибка подключения к голосу:", error);
@@ -2705,11 +2801,14 @@ io.on("connection", (socket) => {
             room.set(socket.id, peer);
         }
 
-        io.to("voice_" + roomId).emit("voice mute", {
+        const mutePayload = {
             socketId: socket.id,
             userId: peer?.userId,
             isMuted: !!data?.isMuted
-        });
+        };
+
+        io.to("voice_" + roomId).emit("voice mute", mutePayload);
+        io.to("voice_watch_" + roomId).emit("voice mute", mutePayload);
     });
 
     socket.on("voice signal", (data) => {
