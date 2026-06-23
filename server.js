@@ -137,47 +137,36 @@ fs.mkdirSync("public/message-photos", { recursive: true });
 fs.mkdirSync("public/avatars", { recursive: true });
 
 let onlineUsers = {};
-const activeVoiceRooms = new Map();
+const voiceRooms = new Map();
 
-function getVoiceParticipants(roomId) {
-    const room = activeVoiceRooms.get(String(roomId));
-    if (!room) return [];
-
-    return Array.from(room.values()).map(user => ({
-        id: user.id,
-        username: user.username,
-        avatar: user.avatar,
-        muted: !!user.muted
-    }));
+function getVoiceRoom(roomId) {
+    const key = String(roomId);
+    if (!voiceRooms.has(key)) voiceRooms.set(key, new Map());
+    return voiceRooms.get(key);
 }
 
-function emitVoiceParticipants(roomId) {
-    const roomKey = String(roomId);
-    io.to("voice_room_" + roomKey).emit("voice participants updated", {
-        roomId: roomKey,
-        participants: getVoiceParticipants(roomKey)
-    });
+function getVoiceRoomUsers(roomId) {
+    const room = getVoiceRoom(roomId);
+    return Array.from(room.values());
 }
 
 function removeSocketFromVoiceRoom(socket) {
     const roomId = socket.voiceRoomId;
-    const userId = socket.voiceUserId;
-    if (!roomId || !userId) return;
+    if (!roomId) return;
 
-    const roomKey = String(roomId);
-    const room = activeVoiceRooms.get(roomKey);
+    const room = getVoiceRoom(roomId);
+    const peer = room.get(socket.id);
+    room.delete(socket.id);
 
-    socket.leave("voice_room_" + roomKey);
+    socket.to("voice_" + roomId).emit("voice user left", {
+        socketId: socket.id,
+        userId: peer?.userId
+    });
 
-    if (room) {
-        room.delete(String(userId));
-        if (room.size === 0) activeVoiceRooms.delete(roomKey);
-    }
+    if (room.size === 0) voiceRooms.delete(String(roomId));
 
+    socket.leave("voice_" + roomId);
     socket.voiceRoomId = null;
-    socket.voiceUserId = null;
-
-    emitVoiceParticipants(roomKey);
 }
 
 const sessionMiddleware = session({
@@ -1068,28 +1057,311 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         </div>
                     </div>
 
-                    <div class="voice-stage">
+                    <div class="voice-stage" id="voiceStage" data-room-id="${room.id}">
                         <div class="voice-stage-icon"><i class="fa-solid fa-headset"></i></div>
-                        <h2>Голосовой канал</h2>
-                        <p id="voiceStatusText">Пока это realtime-лобби голоса. Следующим шагом подключим настоящий WebRTC-аудио поток.</p>
+                        <h2>Голосовой чат</h2>
+                        <p id="voiceStatusText">Подключитесь к голосу, чтобы общаться с участниками комнаты.</p>
 
                         <div class="voice-controls">
-                            <button type="button" id="voiceJoinBtn" class="voice-btn"><i class="fa-solid fa-microphone"></i> Подключиться</button>
-                            <button type="button" id="voiceMuteBtn" class="voice-btn disabled" disabled><i class="fa-solid fa-microphone-slash"></i> Мут</button>
-                            <button type="button" class="voice-btn disabled" disabled><i class="fa-solid fa-display"></i> Экран позже</button>
-                            <button type="button" id="voiceLeaveBtn" class="voice-btn danger disabled" disabled><i class="fa-solid fa-phone-slash"></i> Отключиться</button>
+                            <button type="button" class="voice-btn" id="joinVoiceBtn"><i class="fa-solid fa-microphone"></i> Подключиться</button>
+                            <button type="button" class="voice-btn disabled" id="muteVoiceBtn" disabled><i class="fa-solid fa-volume-xmark"></i> Мут</button>
+                            <button type="button" class="voice-btn danger disabled" id="leaveVoiceBtn" disabled><i class="fa-solid fa-door-open"></i> Отключиться</button>
+                            <a class="voice-btn danger" href="/room/${room.id}/leave"><i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти из комнаты</a>
                         </div>
 
-                        <div class="voice-live-panel">
-                            <div class="voice-live-head">
-                                <b><i class="fa-solid fa-signal"></i> В голосе</b>
-                                <span id="voiceLiveCount">0</span>
-                            </div>
-                            <div id="voiceParticipantsList" class="voice-participants-list">
+                        <div class="voice-live-card">
+                            <h3><i class="fa-solid fa-signal"></i> В голосе</h3>
+                            <div id="voiceUsersList" class="voice-users-list">
                                 <div class="voice-empty">Пока никто не подключился к голосу</div>
                             </div>
                         </div>
+
+                        <div id="remoteAudios" style="display:none"></div>
                     </div>
+
+                    <script>
+                        window.addEventListener("load", function() {
+                            const socket = window.lidusSocket || (window.io ? io() : null);
+                            if (!socket) return;
+
+                            const roomId = "${room.id}";
+                            const currentUserId = "${currentUser.id}";
+                            const currentUserName = "${escapeHtmlServer(currentUser.username)}";
+                            const joinBtn = document.getElementById("joinVoiceBtn");
+                            const muteBtn = document.getElementById("muteVoiceBtn");
+                            const leaveBtn = document.getElementById("leaveVoiceBtn");
+                            const statusText = document.getElementById("voiceStatusText");
+                            const usersList = document.getElementById("voiceUsersList");
+                            const remoteAudios = document.getElementById("remoteAudios");
+
+                            let localStream = null;
+                            let isMuted = false;
+                            let joinedVoice = false;
+                            const peers = new Map();
+                            const voiceUsers = new Map();
+
+                            const rtcConfig = {
+                                iceServers: [
+                                    { urls: "stun:stun.l.google.com:19302" },
+                                    { urls: "stun:stun1.l.google.com:19302" }
+                                ]
+                            };
+
+                            function setStatus(text) {
+                                if (statusText) statusText.textContent = text;
+                            }
+
+                            function escapeVoiceText(text) {
+                                const div = document.createElement("div");
+                                div.innerText = text || "";
+                                return div.innerHTML;
+                            }
+
+                            function renderVoiceUsers() {
+                                if (!usersList) return;
+                                const users = Array.from(voiceUsers.values());
+                                if (!users.length) {
+                                    usersList.innerHTML = '<div class="voice-empty">Пока никто не подключился к голосу</div>';
+                                    return;
+                                }
+                                usersList.innerHTML = users.map(function(user) {
+                                    const muted = user.isMuted ? '<span class="voice-muted">мут</span>' : '<span class="voice-speaking">звук</span>';
+                                    const me = String(user.userId) === String(currentUserId) ? ' <span class="voice-me">вы</span>' : '';
+                                    return '<div class="voice-user-row" id="voice-user-' + user.socketId + '">' +
+                                        '<div class="voice-user-dot"></div>' +
+                                        '<div class="voice-user-name">' + escapeVoiceText(user.username || "Участник") + me + '</div>' +
+                                        muted +
+                                    '</div>';
+                                }).join("");
+                            }
+
+                            function addOrUpdateVoiceUser(user) {
+                                if (!user || !user.socketId) return;
+                                voiceUsers.set(user.socketId, user);
+                                renderVoiceUsers();
+                            }
+
+                            function removeVoiceUser(socketId) {
+                                voiceUsers.delete(socketId);
+                                renderVoiceUsers();
+                            }
+
+                            function setButtons(active) {
+                                if (joinBtn) {
+                                    joinBtn.disabled = active;
+                                    joinBtn.classList.toggle("disabled", active);
+                                }
+                                if (muteBtn) {
+                                    muteBtn.disabled = !active;
+                                    muteBtn.classList.toggle("disabled", !active);
+                                }
+                                if (leaveBtn) {
+                                    leaveBtn.disabled = !active;
+                                    leaveBtn.classList.toggle("disabled", !active);
+                                }
+                            }
+
+                            function createAudioElement(socketId, stream) {
+                                let audio = document.getElementById("remote-audio-" + socketId);
+                                if (!audio) {
+                                    audio = document.createElement("audio");
+                                    audio.id = "remote-audio-" + socketId;
+                                    audio.autoplay = true;
+                                    audio.playsInline = true;
+                                    if (remoteAudios) remoteAudios.appendChild(audio);
+                                }
+                                audio.srcObject = stream;
+                                audio.play().catch(function() {});
+                            }
+
+                            function closePeer(socketId) {
+                                const pc = peers.get(socketId);
+                                if (pc) {
+                                    try { pc.close(); } catch (e) {}
+                                }
+                                peers.delete(socketId);
+                                const audio = document.getElementById("remote-audio-" + socketId);
+                                if (audio) audio.remove();
+                            }
+
+                            function createPeer(socketId, shouldOffer) {
+                                if (!localStream || !socketId) return null;
+                                if (peers.has(socketId)) return peers.get(socketId);
+
+                                const pc = new RTCPeerConnection(rtcConfig);
+                                peers.set(socketId, pc);
+
+                                localStream.getTracks().forEach(function(track) {
+                                    pc.addTrack(track, localStream);
+                                });
+
+                                pc.onicecandidate = function(event) {
+                                    if (event.candidate) {
+                                        socket.emit("voice signal", {
+                                            roomId: roomId,
+                                            to: socketId,
+                                            type: "ice",
+                                            candidate: event.candidate
+                                        });
+                                    }
+                                };
+
+                                pc.ontrack = function(event) {
+                                    const stream = event.streams && event.streams[0];
+                                    if (stream) createAudioElement(socketId, stream);
+                                };
+
+                                pc.onconnectionstatechange = function() {
+                                    if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+                                        closePeer(socketId);
+                                    }
+                                };
+
+                                if (shouldOffer) {
+                                    pc.createOffer()
+                                        .then(function(offer) { return pc.setLocalDescription(offer); })
+                                        .then(function() {
+                                            socket.emit("voice signal", {
+                                                roomId: roomId,
+                                                to: socketId,
+                                                type: "offer",
+                                                sdp: pc.localDescription
+                                            });
+                                        })
+                                        .catch(function(error) {
+                                            console.error("Ошибка WebRTC offer:", error);
+                                        });
+                                }
+
+                                return pc;
+                            }
+
+                            async function joinVoice() {
+                                if (joinedVoice) return;
+                                try {
+                                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                                    joinedVoice = true;
+                                    isMuted = false;
+                                    setButtons(true);
+                                    setStatus("Вы подключены к голосовому чату.");
+                                    addOrUpdateVoiceUser({
+                                        socketId: socket.id,
+                                        userId: currentUserId,
+                                        username: currentUserName,
+                                        isMuted: false
+                                    });
+                                    socket.emit("voice join", { roomId: roomId });
+                                } catch (error) {
+                                    console.error("Ошибка доступа к микрофону:", error);
+                                    setStatus("Не удалось получить доступ к микрофону. Разрешите микрофон в браузере.");
+                                }
+                            }
+
+                            function leaveVoice() {
+                                if (!joinedVoice) return;
+                                joinedVoice = false;
+                                isMuted = false;
+                                socket.emit("voice leave", { roomId: roomId });
+                                peers.forEach(function(_, socketId) { closePeer(socketId); });
+                                peers.clear();
+                                voiceUsers.clear();
+                                if (localStream) {
+                                    localStream.getTracks().forEach(function(track) { track.stop(); });
+                                    localStream = null;
+                                }
+                                setButtons(false);
+                                if (muteBtn) muteBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i> Мут';
+                                setStatus("Вы отключены от голосового чата.");
+                                renderVoiceUsers();
+                            }
+
+                            function toggleMute() {
+                                if (!localStream) return;
+                                isMuted = !isMuted;
+                                localStream.getAudioTracks().forEach(function(track) {
+                                    track.enabled = !isMuted;
+                                });
+                                if (muteBtn) {
+                                    muteBtn.innerHTML = isMuted
+                                        ? '<i class="fa-solid fa-microphone-slash"></i> Включить'
+                                        : '<i class="fa-solid fa-volume-xmark"></i> Мут';
+                                }
+                                const me = voiceUsers.get(socket.id);
+                                if (me) {
+                                    me.isMuted = isMuted;
+                                    voiceUsers.set(socket.id, me);
+                                    renderVoiceUsers();
+                                }
+                                socket.emit("voice mute", { roomId: roomId, isMuted: isMuted });
+                            }
+
+                            if (joinBtn) joinBtn.addEventListener("click", joinVoice);
+                            if (leaveBtn) leaveBtn.addEventListener("click", leaveVoice);
+                            if (muteBtn) muteBtn.addEventListener("click", toggleMute);
+
+                            socket.on("voice users", function(users) {
+                                if (!joinedVoice) return;
+                                (users || []).forEach(function(user) {
+                                    addOrUpdateVoiceUser(user);
+                                    if (user.socketId !== socket.id) createPeer(user.socketId, true);
+                                });
+                            });
+
+                            socket.on("voice user joined", function(user) {
+                                addOrUpdateVoiceUser(user);
+                            });
+
+                            socket.on("voice user left", function(data) {
+                                if (!data) return;
+                                removeVoiceUser(data.socketId);
+                                closePeer(data.socketId);
+                            });
+
+                            socket.on("voice mute", function(data) {
+                                if (!data || !data.socketId) return;
+                                const user = voiceUsers.get(data.socketId);
+                                if (user) {
+                                    user.isMuted = !!data.isMuted;
+                                    voiceUsers.set(data.socketId, user);
+                                    renderVoiceUsers();
+                                }
+                            });
+
+                            socket.on("voice signal", async function(data) {
+                                if (!joinedVoice || !data || !data.from) return;
+                                let pc = peers.get(data.from);
+
+                                try {
+                                    if (data.type === "offer") {
+                                        pc = createPeer(data.from, false);
+                                        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                                        const answer = await pc.createAnswer();
+                                        await pc.setLocalDescription(answer);
+                                        socket.emit("voice signal", {
+                                            roomId: roomId,
+                                            to: data.from,
+                                            type: "answer",
+                                            sdp: pc.localDescription
+                                        });
+                                    } else if (data.type === "answer") {
+                                        if (!pc) return;
+                                        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                                    } else if (data.type === "ice") {
+                                        if (!pc || !data.candidate) return;
+                                        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                                    }
+                                } catch (error) {
+                                    console.error("Ошибка WebRTC signal:", error);
+                                }
+                            });
+
+                            window.addEventListener("beforeunload", function() {
+                                if (joinedVoice) socket.emit("voice leave", { roomId: roomId });
+                            });
+
+                            renderVoiceUsers();
+                        });
+                    </script>
 
                     ${Number(room.owner_id) === Number(currentUser.id) ? `
                     <div id="roomSettingsModal" class="room-settings-modal" onclick="closeRoomSettings(event)">
@@ -1158,124 +1430,6 @@ app.get("/room/:id", requireAuth, async (req, res) => {
 
 
 
-                    <script src="/socket.io/socket.io.js"></script>
-                    <script>
-                        const voiceSocket = io();
-                        const voiceRoomId = "${room.id}";
-                        const voiceCurrentUser = {
-                            id: "${currentUser.id}",
-                            username: "${escapeHtmlServer(currentUser.username)}",
-                            avatar: "${currentUser.avatar || "/images/logo.png"}"
-                        };
-                        let voiceJoined = false;
-                        let voiceMuted = false;
-
-                        const voiceJoinBtn = document.getElementById("voiceJoinBtn");
-                        const voiceMuteBtn = document.getElementById("voiceMuteBtn");
-                        const voiceLeaveBtn = document.getElementById("voiceLeaveBtn");
-                        const voiceStatusText = document.getElementById("voiceStatusText");
-                        const voiceParticipantsList = document.getElementById("voiceParticipantsList");
-                        const voiceLiveCount = document.getElementById("voiceLiveCount");
-
-                        function escapeVoiceText(text) {
-                            const div = document.createElement("div");
-                            div.innerText = text || "";
-                            return div.innerHTML;
-                        }
-
-                        function setVoiceButtons() {
-                            if (!voiceJoinBtn || !voiceMuteBtn || !voiceLeaveBtn) return;
-
-                            voiceJoinBtn.disabled = voiceJoined;
-                            voiceJoinBtn.classList.toggle("disabled", voiceJoined);
-                            voiceJoinBtn.classList.toggle("is-active", voiceJoined);
-                            voiceJoinBtn.innerHTML = voiceJoined
-                                ? '<i class="fa-solid fa-headset"></i> Подключён'
-                                : '<i class="fa-solid fa-microphone"></i> Подключиться';
-
-                            voiceMuteBtn.disabled = !voiceJoined;
-                            voiceMuteBtn.classList.toggle("disabled", !voiceJoined);
-                            voiceMuteBtn.innerHTML = voiceMuted
-                                ? '<i class="fa-solid fa-microphone-slash"></i> Мут включён'
-                                : '<i class="fa-solid fa-microphone"></i> Микрофон активен';
-
-                            voiceLeaveBtn.disabled = !voiceJoined;
-                            voiceLeaveBtn.classList.toggle("disabled", !voiceJoined);
-
-                            if (voiceStatusText) {
-                                voiceStatusText.textContent = voiceJoined
-                                    ? "Вы подключены к голосовому лобби. Настоящий звук подключим следующим шагом через WebRTC."
-                                    : "Пока это realtime-лобби голоса. Следующим шагом подключим настоящий WebRTC-аудио поток.";
-                            }
-                        }
-
-                        function renderVoiceParticipants(participants) {
-                            const users = Array.isArray(participants) ? participants : [];
-                            if (voiceLiveCount) voiceLiveCount.textContent = users.length;
-                            if (!voiceParticipantsList) return;
-
-                            if (!users.length) {
-                                voiceParticipantsList.innerHTML = '<div class="voice-empty">Пока никто не подключился к голосу</div>';
-                                return;
-                            }
-
-                            voiceParticipantsList.innerHTML = users.map(user => {
-                                const isMe = String(user.id) === String(voiceCurrentUser.id);
-                                const muted = user.muted ? " · мут" : "";
-                                return '<div class="voice-user" data-user-id="' + escapeVoiceText(user.id) + '">' +
-                                    '<img src="' + escapeVoiceText(user.avatar || "/images/logo.png") + '">' +
-                                    '<div><b>' + escapeVoiceText(user.username || "Lidus") + (isMe ? " · вы" : "") + '</b>' +
-                                    '<span>В голосе' + muted + '</span></div>' +
-                                    '<div class="voice-speaking-dot"></div>' +
-                                '</div>';
-                            }).join("");
-                        }
-
-                        if (voiceJoinBtn) {
-                            voiceJoinBtn.addEventListener("click", () => {
-                                voiceSocket.emit("voice join", {
-                                    roomId: voiceRoomId,
-                                    user: voiceCurrentUser
-                                });
-                                voiceJoined = true;
-                                voiceMuted = false;
-                                setVoiceButtons();
-                            });
-                        }
-
-                        if (voiceMuteBtn) {
-                            voiceMuteBtn.addEventListener("click", () => {
-                                if (!voiceJoined) return;
-                                voiceMuted = !voiceMuted;
-                                voiceSocket.emit("voice mute", {
-                                    roomId: voiceRoomId,
-                                    muted: voiceMuted
-                                });
-                                setVoiceButtons();
-                            });
-                        }
-
-                        if (voiceLeaveBtn) {
-                            voiceLeaveBtn.addEventListener("click", () => {
-                                voiceSocket.emit("voice leave", { roomId: voiceRoomId });
-                                voiceJoined = false;
-                                voiceMuted = false;
-                                setVoiceButtons();
-                            });
-                        }
-
-                        voiceSocket.on("voice participants updated", (data) => {
-                            if (!data || String(data.roomId) !== String(voiceRoomId)) return;
-                            renderVoiceParticipants(data.participants || []);
-                        });
-
-                        window.addEventListener("beforeunload", () => {
-                            if (voiceJoined) voiceSocket.emit("voice leave", { roomId: voiceRoomId });
-                        });
-
-                        setVoiceButtons();
-                    </script>
-
                     <style>
                         .room-header-actions{display:flex;align-items:center;gap:14px;}
                         .room-settings-gear{width:52px;height:52px;border-radius:18px;padding:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);display:grid;place-items:center;font-size:20px;box-shadow:none;}
@@ -1301,22 +1455,9 @@ app.get("/room/:id", requireAuth, async (req, res) => {
                         .room-settings-divider{height:1px;background:rgba(255,255,255,.08);margin:20px 0;}
                         .room-invite-form label{display:block;margin-bottom:9px;font-weight:900;}
                         .room-invite-line{display:flex;gap:10px;}
-                        .room-invite-line input{flex:1;min-width:0;}
+                        .room-invite-line input{flex:1;min-width:0;}.voice-live-card{margin-top:18px;width:100%;max-width:520px;border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:16px;text-align:left}.voice-live-card h3{margin:0 0 12px;font-size:16px}.voice-users-list{display:flex;flex-direction:column;gap:8px}.voice-empty{color:#9c9caf;font-size:14px}.voice-user-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.06)}.voice-user-dot{width:10px;height:10px;border-radius:50%;background:#35e88b;box-shadow:0 0 16px rgba(53,232,139,.75)}.voice-user-name{flex:1;font-weight:900}.voice-muted,.voice-speaking,.voice-me{font-size:11px;text-transform:uppercase;letter-spacing:.08em;border-radius:999px;padding:4px 7px;font-weight:900}.voice-muted{background:rgba(255,80,80,.16);color:#ffb6b6}.voice-speaking{background:rgba(53,232,139,.14);color:#aef5ce}.voice-me{background:rgba(139,92,255,.18);color:#d8ccff;margin-left:5px}
                         @media(max-width:768px){.room-header-actions{gap:8px}.room-settings-gear{width:44px;height:44px;border-radius:15px}.room-count{min-width:86px}.room-privacy-badges{gap:6px}.room-privacy-badges span{font-size:11px;padding:6px 8px}.room-settings-window{padding:18px;border-radius:22px}.room-settings-head h2{font-size:21px}.room-invite-line{flex-direction:column}.room-invite-line button{width:100%;}.room-toggle-row{grid-template-columns:44px 1fr;padding:12px}.room-toggle-row small{font-size:12px}}
-                        .voice-live-panel{margin-top:18px;width:min(520px,100%);border-radius:22px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);padding:14px;text-align:left;}
-                        .voice-live-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;color:#fff;}
-                        .voice-live-head span{min-width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:rgba(139,92,255,.25);font-weight:900;color:#fff;}
-                        .voice-participants-list{display:flex;flex-direction:column;gap:9px;}
-                        .voice-user{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);}
-                        .voice-user img{width:36px;height:36px;border-radius:50%;object-fit:cover;}
-                        .voice-user b{display:block;font-size:14px;}
-                        .voice-user span{font-size:12px;color:#9c9caf;}
-                        .voice-user .voice-speaking-dot{margin-left:auto;width:10px;height:10px;border-radius:50%;background:#38e88f;box-shadow:0 0 12px rgba(56,232,143,.8);}
-                        .voice-empty{padding:12px;border-radius:16px;background:rgba(0,0,0,.18);color:#9c9caf;text-align:center;font-weight:800;}
-                        .voice-btn.is-active{background:linear-gradient(135deg,#6b4dff,#9a6cff);color:white;}
-                        @media(max-width:768px){.voice-live-panel{padding:12px;border-radius:18px}.voice-user{padding:9px 10px}.voice-user img{width:32px;height:32px}}
                     </style>
-
 
                     <div class="room-members-card">
                         <h2>Участники</h2>
@@ -2395,43 +2536,74 @@ io.on("connection", (socket) => {
         });
     });
 
-    socket.on("voice join", (data) => {
+    socket.on("voice join", async (data) => {
+        const roomId = String(data?.roomId || "");
         const userId = Number(socket.userId || socket.request.session?.userId);
-        const roomId = String(data?.roomId || "").trim();
-        if (!userId || !roomId) return;
+        if (!roomId || !userId) return;
 
-        removeSocketFromVoiceRoom(socket);
+        try {
+            removeSocketFromVoiceRoom(socket);
 
-        socket.join("voice_room_" + roomId);
-        socket.voiceRoomId = roomId;
-        socket.voiceUserId = userId;
+            const userResult = await pool.query(
+                `SELECT id, username, avatar FROM users WHERE id = $1`,
+                [userId]
+            );
+            const user = userResult.rows[0];
+            if (!user) return;
 
-        if (!activeVoiceRooms.has(roomId)) activeVoiceRooms.set(roomId, new Map());
+            const roomKey = "voice_" + roomId;
+            const room = getVoiceRoom(roomId);
+            const peer = {
+                socketId: socket.id,
+                userId: user.id,
+                username: user.username,
+                avatar: user.avatar || "/images/logo.png",
+                isMuted: false
+            };
 
-        const room = activeVoiceRooms.get(roomId);
-        room.set(String(userId), {
-            id: userId,
-            username: String(data?.user?.username || "Lidus").slice(0, 60),
-            avatar: String(data?.user?.avatar || "/images/logo.png"),
-            muted: false
-        });
+            socket.voiceRoomId = roomId;
+            socket.join(roomKey);
 
-        emitVoiceParticipants(roomId);
+            const existingUsers = Array.from(room.values());
+            room.set(socket.id, peer);
+
+            socket.emit("voice users", existingUsers);
+            socket.to(roomKey).emit("voice user joined", peer);
+        } catch (error) {
+            console.error("Ошибка подключения к голосу:", error);
+        }
     });
 
     socket.on("voice mute", (data) => {
-        const userId = Number(socket.voiceUserId || socket.userId || socket.request.session?.userId);
-        const roomId = String(data?.roomId || socket.voiceRoomId || "").trim();
-        if (!userId || !roomId) return;
+        const roomId = String(data?.roomId || socket.voiceRoomId || "");
+        if (!roomId) return;
 
-        const room = activeVoiceRooms.get(roomId);
-        if (!room || !room.has(String(userId))) return;
+        const room = getVoiceRoom(roomId);
+        const peer = room.get(socket.id);
+        if (peer) {
+            peer.isMuted = !!data?.isMuted;
+            room.set(socket.id, peer);
+        }
 
-        const user = room.get(String(userId));
-        user.muted = !!data?.muted;
-        room.set(String(userId), user);
+        io.to("voice_" + roomId).emit("voice mute", {
+            socketId: socket.id,
+            userId: peer?.userId,
+            isMuted: !!data?.isMuted
+        });
+    });
 
-        emitVoiceParticipants(roomId);
+    socket.on("voice signal", (data) => {
+        const roomId = String(data?.roomId || socket.voiceRoomId || "");
+        const to = data?.to;
+        if (!roomId || !to) return;
+
+        socket.to(to).emit("voice signal", {
+            from: socket.id,
+            roomId,
+            type: data.type,
+            sdp: data.sdp,
+            candidate: data.candidate
+        });
     });
 
     socket.on("voice leave", () => {
@@ -2440,7 +2612,6 @@ io.on("connection", (socket) => {
 
     socket.on("disconnect", async () => {
         removeSocketFromVoiceRoom(socket);
-
         const userId = Number(socket.userId || socket.request.session?.userId);
         if (!userId) return;
 
