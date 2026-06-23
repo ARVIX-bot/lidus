@@ -1501,6 +1501,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 const socket = io();
                 const dialogId = "${dialogId}";
                 const currentUserId = "${currentUser.id}";
+                const currentUserName = "${escapeHtmlServer(currentUser.username)}";
                 const friendId = "${friend.id}";
                 let typingTimer = null;
                 let isTyping = false;
@@ -1524,7 +1525,30 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     } catch (e) {}
                 }
 
-                function scrollChatBottom() { const messages = document.getElementById("messages"); requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; }); setTimeout(() => { messages.scrollTop = messages.scrollHeight; }, 100); }
+                function scrollChatBottom(force = false) {
+                    const messages = document.getElementById("messages");
+                    if (!messages) return;
+
+                    messages.style.scrollBehavior = "auto";
+
+                    const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
+                    const nearBottom = distanceFromBottom < 220;
+
+                    if (force || nearBottom) {
+                        messages.scrollTop = messages.scrollHeight;
+                    }
+                }
+
+                function forceInitialChatBottom() {
+                    const messages = document.getElementById("messages");
+                    if (!messages) return;
+
+                    messages.style.scrollBehavior = "auto";
+                    messages.scrollTop = messages.scrollHeight;
+
+                    document.documentElement.scrollTop = 0;
+                    document.body.scrollTop = 0;
+                }
                 function escapeHtml(text) { const div = document.createElement("div"); div.innerText = text || ""; return div.innerHTML; }
                 function getCheckSvg(isRead) {
                     return isRead
@@ -1547,7 +1571,7 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     if (data.id) row.dataset.messageId = data.id;
                     row.innerHTML = content;
                     row.querySelectorAll(".chat-photo").forEach(img => { img.addEventListener("click", () => openPhoto(img.src)); img.onload = scrollChatBottom; });
-                    messages.appendChild(row); scrollChatBottom();
+                    messages.appendChild(row); scrollChatBottom(true);
                 }
                 socket.on("private message", (data) => {
                     if (String(data.fromId) !== String(currentUserId)) {
@@ -1630,15 +1654,31 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 photoInput.addEventListener("change", () => { photoPreview.innerHTML = ""; const photos = Array.from(photoInput.files); if (photos.length === 0) { photoPreview.style.display = "none"; return; } photoPreview.style.display = "grid"; photos.forEach(photo => { const reader = new FileReader(); reader.onload = function(e) { const item = document.createElement("div"); item.className = "preview-item"; item.innerHTML = "<img src='" + e.target.result + "'><span>×</span>"; item.querySelector("span").addEventListener("click", () => { photoInput.value = ""; photoPreview.innerHTML = ""; photoPreview.style.display = "none"; }); photoPreview.appendChild(item); }; reader.readAsDataURL(photo); }); });
                 chatForm.addEventListener("submit", async function(e) {
                     e.preventDefault();
+
                     const text = messageInput.value.trim();
                     const photos = photoInput.files || [];
                     if (!text && photos.length === 0) return;
+
+                    const oldText = messageInput.value;
+                    const tempId = "temp_" + Date.now();
+                    const canShowInstantly = text && photos.length === 0;
+
+                    if (canShowInstantly) {
+                        addMessage({
+                            id: tempId,
+                            fromId: currentUserId,
+                            fromName: currentUserName || "Вы",
+                            text,
+                            photos: [],
+                            time: new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+                            readAt: null
+                        });
+                    }
 
                     const formData = new FormData();
                     formData.append("message", text);
                     for (let i = 0; i < photos.length; i++) formData.append("photos", photos[i]);
 
-                    const oldText = messageInput.value;
                     messageInput.value = "";
                     messageInput.style.height = "auto";
                     photoInput.value = "";
@@ -1650,14 +1690,37 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                     try {
                         const response = await fetch("/send-message/" + friendId, { method: "POST", body: formData });
                         const result = await response.json();
+
                         if (result.success && result.message) {
-                            addMessage(result.message);
-                            scrollChatBottom();
+                            if (canShowInstantly) {
+                                const tempRow = document.querySelector('[data-message-id="' + tempId + '"]');
+                                if (tempRow) {
+                                    tempRow.dataset.messageId = result.message.id;
+                                    const tempRead = document.getElementById("read-status-" + tempId);
+                                    if (tempRead) {
+                                        tempRead.id = "read-status-" + result.message.id;
+                                        tempRead.classList.toggle("is-read", !!result.message.readAt);
+                                        tempRead.innerHTML = getCheckSvg(!!result.message.readAt);
+                                    }
+                                }
+                            } else {
+                                addMessage(result.message);
+                            }
+
+                            scrollChatBottom(true);
                         } else {
+                            if (canShowInstantly) {
+                                const tempRow = document.querySelector('[data-message-id="' + tempId + '"]');
+                                if (tempRow) tempRow.remove();
+                            }
                             messageInput.value = oldText;
                             alert(result.error || "Ошибка отправки сообщения");
                         }
                     } catch (error) {
+                        if (canShowInstantly) {
+                            const tempRow = document.querySelector('[data-message-id="' + tempId + '"]');
+                            if (tempRow) tempRow.remove();
+                        }
                         messageInput.value = oldText;
                         console.error("Ошибка отправки сообщения:", error);
                         alert("Ошибка отправки сообщения");
@@ -1665,11 +1728,18 @@ app.get("/dialog/:id", requireAuth, async (req, res) => {
                 });
                 function openPhoto(src) { document.getElementById("modalPhoto").src = src; document.getElementById("photoModal").style.display = "flex"; }
                 function closePhoto() { document.getElementById("photoModal").style.display = "none"; }
+                document.addEventListener("DOMContentLoaded", () => {
+                    forceInitialChatBottom();
+                    requestAnimationFrame(forceInitialChatBottom);
+                    setTimeout(forceInitialChatBottom, 50);
+                    setTimeout(forceInitialChatBottom, 250);
+                });
+
                 window.addEventListener("load", () => {
-                    scrollChatBottom();
-                    setTimeout(scrollChatBottom, 100);
-                    setTimeout(scrollChatBottom, 500);
-                    setTimeout(scrollChatBottom, 1000);
+                    forceInitialChatBottom();
+                    setTimeout(forceInitialChatBottom, 100);
+                    setTimeout(forceInitialChatBottom, 500);
+                    setTimeout(forceInitialChatBottom, 1000);
                 });
             </script>
             <script src="/push.js?v=2"></script>
